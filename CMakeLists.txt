@@ -50,6 +50,7 @@ set(HDRS
   include/DBoW2/QueryResults.h        include/DBoW2/TemplatedDatabase.h   include/DBoW2/FORB.h
   include/DBoW2/DBoW2.h               include/DBoW2/FClass.h              include/DBoW2/FeatureVector.h
   include/DBoW2/ScoringObject.h       include/DBoW2/TemplatedVocabulary.h)
+  
 # Add source files
 set(SRCS 
   src/BowVector.cpp     
@@ -61,12 +62,12 @@ set(SRCS
 
 if(BUILD_DBoW2)
 
-  set(LIB_SHARED "SHARED")
+  set(LIB_TYPE "SHARED")
   if(WIN32)
     set(LIB_SHARED "STATIC")
   endif(WIN32)
 
-  add_library(${project_name} ${LIB_SHARED} ${SRCS})
+  add_library(${project_name} ${LIB_TYPE} ${SRCS})
   target_include_directories(${project_name} PUBLIC include/DBoW2/ include/)
   target_link_libraries(${project_name} ${OpenCV_LIBS})
   set_target_properties(${project_name} PROPERTIES CXX_STANDARD 11)
