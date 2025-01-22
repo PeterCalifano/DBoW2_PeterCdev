@@ -19,7 +19,7 @@
 namespace DBoW2 {
 
 /// Functions to manipulate SURF64 descriptors
-class FSurf64: protected FClass
+class FSurf64: protected FClass // DEVNOTE see implementation of this class (or ORB, BRIEF) to get an idea of how to implement any custom descriptor to be used by DBoW2
 {
 public:
 
