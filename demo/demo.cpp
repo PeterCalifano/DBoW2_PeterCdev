@@ -23,7 +23,7 @@ using namespace std;
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 
-void loadFeatures(vector<vector<cv::Mat > > &features);
+void loadFeatures(vector<vector<cv::Mat > > &features, std::string img_path="images");
 void changeStructure(const cv::Mat &plain, vector<cv::Mat> &out);
 void testVocCreation(const vector<vector<cv::Mat > > &features);
 void testDatabase(const vector<vector<cv::Mat > > &features);
@@ -44,10 +44,18 @@ void wait()
 
 // ----------------------------------------------------------------------------
 
-int main()
-{
+int main(int argc, char** argv)
+{ 
+  std::string img_path = "images"; // Default path of demo images
+  if (argc > 1)
+  {
+    img_path = argv[1]; // Override default path of demo images if provided
+  }
+
+  std::cout << "Using image path: " << img_path << std::endl;
+
   vector<vector<cv::Mat > > features;
-  loadFeatures(features);
+  loadFeatures(features, img_path);
 
   testVocCreation(features);
 
@@ -60,7 +68,7 @@ int main()
 
 // ----------------------------------------------------------------------------
 
-void loadFeatures(vector<vector<cv::Mat > > &features)
+void loadFeatures(vector<vector<cv::Mat > > &features, std::string img_path)
 {
   features.clear();
   features.reserve(NIMAGES);
@@ -68,10 +76,11 @@ void loadFeatures(vector<vector<cv::Mat > > &features)
   cv::Ptr<cv::ORB> orb = cv::ORB::create();
 
   cout << "Extracting ORB features..." << endl;
+
   for(int i = 0; i < NIMAGES; ++i)
   {
     stringstream ss;
-    ss << "images/image" << i << ".png";
+    ss << (string)img_path + "/image" << i << ".png";
 
     cv::Mat image = cv::imread(ss.str(), 0);
     cv::Mat mask;
