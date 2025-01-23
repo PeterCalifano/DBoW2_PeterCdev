@@ -96,6 +96,12 @@ void loadFeatures(vector<vector<cv::Mat > > &features, std::string img_path)
 
 // ----------------------------------------------------------------------------
 
+/**
+ * @brief Function converting a matrix cv::Mat into a std::vector<cv::Mat> containing the rows of cv::Mat as vector entries.
+ * 
+ * @param plain 
+ * @param out 
+ */
 void changeStructure(const cv::Mat &plain, vector<cv::Mat> &out)
 {
   out.resize(plain.rows);
