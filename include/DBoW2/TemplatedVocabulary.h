@@ -32,7 +32,8 @@ template<class TDescriptor, class F>
 class TemplatedVocabulary
 {		
 public:
-  
+  typedef TDescriptor FeatureType; // Define type to identify feature type for static assert
+
   /**
    * Initiates an empty vocabulary
    * @param k branching factor
@@ -40,9 +41,9 @@ public:
    * @param weighting weighting type
    * @param scoring scoring type
    */
-  TemplatedVocabulary(int k = 10, int L = 5, 
-    WeightingType weighting = TF_IDF, ScoringType scoring = L1_NORM);
-  
+  TemplatedVocabulary(int k = 10, int L = 5,
+                      WeightingType weighting = TF_IDF, ScoringType scoring = L1_NORM);
+
   /**
    * Creates the vocabulary by loading a file
    * @param filename
