@@ -55,14 +55,19 @@ int main(int argc, char** argv)
   std::cout << "Using image path: " << img_path << std::endl;
 
   vector<vector<cv::Mat > > features;
+
+  // Get features from images dataset
   loadFeatures(features, img_path);
 
+  // Test creation of vocabulary from features
   testVocCreation(features);
 
   wait();
 
-  testDatabase(features);
+  // Test creation of database from features and query
+  testDatabase(features); // DOUBT: what is a database?
 
+  // NOTE: database is a collection of features from images that can be queried to find images similar to a input query image TBC
   return 0;
 }
 
