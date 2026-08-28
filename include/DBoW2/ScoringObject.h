@@ -1,10 +1,9 @@
 /**
- * File: ScoringObject.h
- * Date: November 2011
- * Author: Dorian Galvez-Lopez
- * Description: functions to compute bow scores 
- * License: see the LICENSE.txt file
- *
+ * @file ScoringObject.h
+ * @brief Polymorphic bag-of-words scoring strategies.
+ * @author Dorian Galvez-Lopez and Pietro Califano
+ * @date 2026-08-28
+ * @copyright See LICENSE.txt.
  */
 
 #ifndef __D_T_SCORING_OBJECT__
@@ -40,7 +39,7 @@ public:
   // If you change the type of WordValue, make sure you change also the
 	// epsilon value (this is needed by the KL method)
 	
-  virtual ~GeneralScoring() {} //!< Required for virtual base classes	
+  virtual ~GeneralScoring() = default; //!< Required for virtual base classes
 };
 
 /** 
@@ -58,14 +57,14 @@ public:
      * @param w \
      * @return score between v and w \
      */ \
-    virtual double score(const BowVector &v, const BowVector &w) const; \
+    double score(const BowVector &v, const BowVector &w) const override; \
     \
     /** \
      * Says if a vector must be normalized according to the scoring function \
-     * @param norm (out) if true, norm to use
+     * @param norm (out) if true, norm to use \
      * @return true iff vectors must be normalized \
      */ \
-    virtual inline bool mustNormalize(LNorm &norm) const  \
+    inline bool mustNormalize(LNorm &norm) const override \
       { norm = NORM; return MUSTNORMALIZE; } \
   }
   
@@ -92,4 +91,3 @@ class __SCORING_CLASS(DotProductScoring, false, L1);
 } // namespace DBoW2
 
 #endif
-

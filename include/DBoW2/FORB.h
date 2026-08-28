@@ -1,10 +1,9 @@
 /**
- * File: FORB.h
- * Date: June 2012
- * Author: Dorian Galvez-Lopez
- * Description: functions for ORB descriptors
- * License: see the LICENSE.txt file
- *
+ * @file FORB.h
+ * @brief ORB descriptor policy and backward-compatible helper declarations.
+ * @author Dorian Galvez-Lopez and Pietro Califano
+ * @date 2026-08-28
+ * @copyright See LICENSE.txt.
  */
 
 #ifndef __D_T_F_ORB__
@@ -45,6 +44,13 @@ namespace DBoW2
          */
         [[nodiscard]] static Descriptor Clone(const Descriptor &descriptor);
 
+        /**
+         * @brief Validate one ORB descriptor at a public policy boundary.
+         * @param descriptor Descriptor required to be a 1 x 32 CV_8U row.
+         * @throws std::invalid_argument If the shape or scalar type is invalid.
+         */
+        static void Validate(const Descriptor &descriptor);
+
         /// Pointer to a single descriptor
         typedef const TDescriptor *pDescriptor;
         /// Descriptor length (in bytes)
@@ -70,6 +76,7 @@ namespace DBoW2
          * Returns a string version of the descriptor
          * @param a descriptor
          * @return string version
+         * @throws std::invalid_argument If the descriptor shape or type is invalid.
          */
         static std::string toString(const TDescriptor &a);
 
@@ -77,6 +84,7 @@ namespace DBoW2
          * Returns a descriptor from a string
          * @param a descriptor
          * @param s string version
+         * @throws std::invalid_argument If s is not exactly one valid ORB descriptor.
          */
         static void fromString(TDescriptor &a, const std::string &s);
 
@@ -84,6 +92,7 @@ namespace DBoW2
          * Returns a mat with the descriptors in float format
          * @param descriptors
          * @param mat (out) NxL 32F matrix
+         * @throws std::invalid_argument If any descriptor is malformed.
          */
         static void toMat32F(const std::vector<TDescriptor> &descriptors,
                              cv::Mat &mat);
@@ -92,6 +101,7 @@ namespace DBoW2
          * Returns a mat with the descriptors in float format
          * @param descriptors NxL CV_8U matrix
          * @param mat (out) NxL 32F matrix
+         * @throws std::invalid_argument If the matrix type or column count is invalid.
          */
         static void toMat32F(const cv::Mat &descriptors, cv::Mat &mat);
 
@@ -99,6 +109,7 @@ namespace DBoW2
          * Returns a matrix with the descriptor in OpenCV format
          * @param descriptors vector of N row descriptors
          * @param mat (out) NxL CV_8U matrix
+         * @throws std::invalid_argument If any descriptor is malformed.
          */
         static void toMat8U(const std::vector<TDescriptor> &descriptors,
                             cv::Mat &mat);
@@ -121,8 +132,6 @@ namespace DBoW2
         /** @brief Convert validated ORB descriptors into 256 zero/one float columns. */
         [[nodiscard]] static cv::Mat ToMat32F(std::span<const Descriptor> descriptors);
 
-      private:
-        static void Validate(const Descriptor &descriptor);
     };
 
 } // namespace DBoW2

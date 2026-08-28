@@ -1,10 +1,9 @@
 /**
- * File: ScoringObject.cpp
- * Date: November 2011
- * Author: Dorian Galvez-Lopez
- * Description: functions to compute bow scores 
- * License: see the LICENSE.txt file
- *
+ * @file ScoringObject.cpp
+ * @brief Bag-of-words scoring strategy definitions.
+ * @author Dorian Galvez-Lopez and Pietro Califano
+ * @date 2026-08-28
+ * @copyright See LICENSE.txt.
  */
 
 #include <cfloat>
@@ -145,7 +144,7 @@ double ChiSquareScoring::score(const BowVector &v1, const BowVector &v2)
     {
       // (v-w)^2/(v+w) - v - w = -4 vw/(v+w)
       // we move the -4 out
-      if(vi + wi != 0.0) score += vi * wi / (vi + wi);
+      if(vi + wi > 0.0) score += vi * wi / (vi + wi);
       
       // move v1 and v2 forward
       ++v1_it;
@@ -192,7 +191,7 @@ double KLScoring::score(const BowVector &v1, const BowVector &v2) const
     
     if(v1_it->first == v2_it->first)
     {
-      if(vi != 0 && wi != 0) score += vi * log(vi/wi);
+      if(vi > 0.0 && wi > 0.0) score += vi * log(vi/wi);
       
       // move v1 and v2 forward
       ++v1_it;
@@ -214,7 +213,7 @@ double KLScoring::score(const BowVector &v1, const BowVector &v2) const
   
   // sum rest of items of v
   for(; v1_it != v1_end; ++v1_it) 
-    if(v1_it->second != 0)
+    if(v1_it->second > 0.0)
       score += v1_it->second * (log(v1_it->second) - LOG_EPS);
   
   return score; // cannot be scaled
@@ -312,4 +311,3 @@ double DotProductScoring::score(const BowVector &v1,
 
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
-

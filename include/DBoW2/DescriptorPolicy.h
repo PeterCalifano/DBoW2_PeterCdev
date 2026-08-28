@@ -1,7 +1,8 @@
 /**
  * @file DescriptorPolicy.h
  * @brief C++20 descriptor contracts and fixed-float policy utilities.
- * @author Dorian Galvez-Lopez and project contributors
+ * @author Dorian Galvez-Lopez and Pietro Califano
+ * @date 2026-08-28
  * @copyright See LICENSE.txt.
  */
 
@@ -66,9 +67,16 @@ namespace DBoW2
         typename std::integral_constant<EDistanceMetric, TPolicy::kMetric>;
         typename std::integral_constant<
             EDescriptorNormalization, TPolicy::kNormalization>;
-    } && (TPolicy::kElementCount > 0) && std::default_initializable<typename TPolicy::Descriptor> && std::copyable<typename TPolicy::Descriptor> && requires(const typename TPolicy::Descriptor &descriptor, typename TPolicy::Descriptor &output, std::span<const typename TPolicy::Descriptor *const> descriptors, std::string_view serialized) {
+    } && (TPolicy::kElementCount > 0) &&
+        std::default_initializable<typename TPolicy::Descriptor> &&
+        std::copyable<typename TPolicy::Descriptor> &&
+        requires(const typename TPolicy::Descriptor &descriptor,
+                 typename TPolicy::Descriptor &output,
+                 std::span<const typename TPolicy::Descriptor *const> descriptors,
+                 std::string_view serialized) {
         typename TPolicy::Descriptor;
         typename TPolicy::Scalar;
+        { TPolicy::Validate(descriptor) } -> std::same_as<void>;
         { TPolicy::Clone(descriptor) } -> std::same_as<typename TPolicy::Descriptor>;
         { TPolicy::Mean(descriptors) } -> std::same_as<typename TPolicy::Descriptor>;
         { TPolicy::Distance(descriptor, descriptor) } -> std::convertible_to<double>;
@@ -82,8 +90,8 @@ namespace DBoW2
      * @tparam TPolicy Candidate local descriptor policy.
      */
     template <typename TPolicy>
-    concept LocalDescriptorPolicy = DescriptorPolicy<TPolicy> && requires(
-                                                                     std::span<const typename TPolicy::Descriptor> descriptors) {
+    concept LocalDescriptorPolicy = DescriptorPolicy<TPolicy> &&
+        requires(std::span<const typename TPolicy::Descriptor> descriptors) {
         { TPolicy::ToMat32F(descriptors) } -> std::same_as<cv::Mat>;
     };
 
@@ -107,6 +115,9 @@ namespace DBoW2
         static constexpr EDistanceMetric kMetric = EDistanceMetric::hamming;
         static constexpr EDescriptorNormalization kNormalization = EDescriptorNormalization::none;
 
+        /** @brief Validate a bitset descriptor; its type already enforces the full contract. */
+        static void Validate(const Descriptor &) {}
+
         /**
          * @brief Return an independently owned copy of one descriptor.
          * @param descriptor Descriptor value to copy.
@@ -114,6 +125,7 @@ namespace DBoW2
          */
         [[nodiscard]] static Descriptor Clone(const Descriptor &descriptor)
         {
+            Validate(descriptor);
             return descriptor;
         }
 
@@ -197,6 +209,11 @@ namespace DBoW2
             {
                 return {};
             }
+            if (descriptors.size() >
+                static_cast<std::size_t>((std::numeric_limits<int>::max)()))
+            {
+                throw std::length_error("Descriptor count exceeds the OpenCV row range.");
+            }
 
             cv::Mat matrix(static_cast<int>(descriptors.size()), static_cast<int>(N), CV_32F);
             for (std::size_t row = 0; row < descriptors.size(); ++row)
@@ -234,6 +251,7 @@ namespace DBoW2
          */
         [[nodiscard]] static Descriptor Clone(const Descriptor &descriptor)
         {
+            Validate(descriptor);
             return descriptor;
         }
 
@@ -339,6 +357,11 @@ namespace DBoW2
             {
                 return {};
             }
+            if (descriptors.size() >
+                static_cast<std::size_t>((std::numeric_limits<int>::max)()))
+            {
+                throw std::length_error("Descriptor count exceeds the OpenCV row range.");
+            }
 
             cv::Mat matrix(static_cast<int>(descriptors.size()), static_cast<int>(N), CV_32F);
             for (std::size_t row = 0; row < descriptors.size(); ++row)
@@ -353,16 +376,11 @@ namespace DBoW2
             return matrix;
         }
 
-      private:
-        static void ValidatePointer(const Descriptor *descriptor)
-        {
-            if (descriptor == nullptr)
-            {
-                throw std::invalid_argument("Descriptor centroid input contains a null pointer.");
-            }
-            Validate(*descriptor);
-        }
-
+        /**
+         * @brief Validate the fixed logical length and finite values of one descriptor.
+         * @param descriptor Descriptor received at a public policy boundary.
+         * @throws std::invalid_argument If the length differs from N or a value is nonfinite.
+         */
         static void Validate(const Descriptor &descriptor)
         {
             if (descriptor.size() != N)
@@ -377,6 +395,17 @@ namespace DBoW2
                 }
             }
         }
+
+      private:
+        static void ValidatePointer(const Descriptor *descriptor)
+        {
+            if (descriptor == nullptr)
+            {
+                throw std::invalid_argument("Descriptor centroid input contains a null pointer.");
+            }
+            Validate(*descriptor);
+        }
+
     };
 
     /**
@@ -408,6 +437,7 @@ namespace DBoW2
          */
         [[nodiscard]] static Descriptor Clone(const Descriptor &descriptor)
         {
+            Validate(descriptor);
             return descriptor;
         }
 
@@ -535,6 +565,11 @@ namespace DBoW2
             {
                 return {};
             }
+            if (descriptors.size() >
+                static_cast<std::size_t>((std::numeric_limits<int>::max)()))
+            {
+                throw std::length_error("Descriptor count exceeds the OpenCV row range.");
+            }
 
             cv::Mat matrix(static_cast<int>(descriptors.size()), static_cast<int>(N), CV_32F);
             for (std::size_t row = 0; row < descriptors.size(); ++row)
@@ -549,16 +584,11 @@ namespace DBoW2
             return matrix;
         }
 
-      private:
-        static void ValidatePointer(const Descriptor *descriptor)
-        {
-            if (descriptor == nullptr)
-            {
-                throw std::invalid_argument("Descriptor centroid input contains a null pointer.");
-            }
-            Validate(*descriptor);
-        }
-
+        /**
+         * @brief Validate that every value in one fixed-size descriptor is finite.
+         * @param descriptor Descriptor received at a public policy boundary.
+         * @throws std::invalid_argument If any value is nonfinite.
+         */
         static void Validate(const Descriptor &descriptor)
         {
             for (const float value : descriptor)
@@ -569,6 +599,17 @@ namespace DBoW2
                 }
             }
         }
+
+      private:
+        static void ValidatePointer(const Descriptor *descriptor)
+        {
+            if (descriptor == nullptr)
+            {
+                throw std::invalid_argument("Descriptor centroid input contains a null pointer.");
+            }
+            Validate(*descriptor);
+        }
+
     };
 
     static_assert(DescriptorPolicy<FixedFloatDescriptorPolicy<1>>);

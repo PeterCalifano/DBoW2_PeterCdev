@@ -1,22 +1,25 @@
 /**
- * File: TemplatedDatabase.h
- * Date: March 2011
- * Author: Dorian Galvez-Lopez
- * Description: templated database of images
- * License: see the LICENSE.txt file
- *
+ * @file TemplatedDatabase.h
+ * @brief Policy-typed visual database with validated persistence and indexes.
+ * @author Dorian Galvez-Lopez and Pietro Califano
+ * @date 2026-08-28
+ * @copyright See LICENSE.txt.
  */
  
 #ifndef __D_T_TEMPLATED_DATABASE__
 #define __D_T_TEMPLATED_DATABASE__
 
+#include <cmath>
 #include <vector>
 #include <numeric>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <list>
 #include <span>
 #include <set>
+#include <stdexcept>
+#include <utility>
 
 #include "TemplatedVocabulary.h"
 #include "QueryResults.h"
@@ -29,9 +32,9 @@ namespace DBoW2 {
 // For query functions
 static int MIN_COMMON_WORDS = 5;
 
+/// @brief Generic image database operating on one descriptor policy.
 /// @tparam TPolicy Static descriptor policy satisfying DescriptorPolicy.
 template <DescriptorPolicy TPolicy>
-/// @brief Generic image database operating on one descriptor policy.
 class TemplatedDatabase
 {
 public:
@@ -39,32 +42,36 @@ public:
   using Policy = TPolicy;
   using Descriptor = DescriptorType<TPolicy>;
   using DescriptorList = std::vector<Descriptor>;
+  using Vocabulary = TemplatedVocabulary<TPolicy>;
 
   /**
-   * Creates an empty database without vocabulary
+   * Creates an empty database with an empty vocabulary.
    * @param use_di a direct index is used to store feature indexes
    * @param di_levels levels to go up the vocabulary tree to select the 
    *   node id to store in the direct index when adding images
+   * @throws std::invalid_argument If di_levels is negative.
    */
   explicit TemplatedDatabase(bool use_di = true, int di_levels = 0);
 
   /**
    * Creates a database with the given vocabulary
-   * @tparam T Vocabulary-compatible type copied by the database.
    * @param voc vocabulary
    * @param use_di a direct index is used to store feature indexes
    * @param di_levels levels to go up the vocabulary tree to select the 
    *   node id to store in the direct index when adding images
+   * @throws std::invalid_argument If di_levels is negative.
    */
-  template<class T>
-  explicit TemplatedDatabase(const T &voc, bool use_di = true, 
+  explicit TemplatedDatabase(const Vocabulary &voc, bool use_di = true,
     int di_levels = 0);
 
   /**
    * Copy constructor. Copies the vocabulary too
    * @param db object to copy
    */
-  TemplatedDatabase(const TemplatedDatabase<TPolicy> &db);
+  TemplatedDatabase(const TemplatedDatabase<TPolicy> &db) = default;
+
+  /** @brief Move a database and all of its owned indexes without copying. */
+  TemplatedDatabase(TemplatedDatabase<TPolicy> &&db) noexcept = default;
 
   /** 
    * Creates the database from a file
@@ -81,40 +88,39 @@ public:
   /**
    * Destructor
    */
-  virtual ~TemplatedDatabase(void);
+  virtual ~TemplatedDatabase() = default;
 
   /**
    * Copies the given database and its vocabulary
    * @param db database to copy
    */
-  TemplatedDatabase<TPolicy>& operator=(
-    const TemplatedDatabase<TPolicy> &db);
+  TemplatedDatabase<TPolicy>& operator=(const TemplatedDatabase<TPolicy> &db) = default;
+
+  /** @brief Replace this database by moving another owned database snapshot. */
+  TemplatedDatabase<TPolicy>& operator=(TemplatedDatabase<TPolicy> &&db) noexcept = default;
 
   /**
    * Sets the vocabulary to use and clears the content of the database.
-   * @tparam T Vocabulary-compatible type copied by the database.
    * @param voc vocabulary to copy
    */
-  template<class T>
-  inline void setVocabulary(const T &voc);
+  inline void setVocabulary(const Vocabulary &voc);
   
   /**
    * Sets the vocabulary to use and the direct index parameters, and clears
    * the content of the database
-   * @tparam T Vocabulary-compatible type copied by the database.
    * @param voc vocabulary to copy
    * @param use_di a direct index is used to store feature indexes
    * @param di_levels levels to go up the vocabulary tree to select the 
    *   node id to store in the direct index when adding images
+   * @throws std::invalid_argument If di_levels is negative.
    */
-  template<class T>
-  void setVocabulary(const T& voc, bool use_di, int di_levels = 0);
+  void setVocabulary(const Vocabulary& voc, bool use_di, int di_levels = 0);
   
   /**
    * Returns a pointer to the vocabulary used
    * @return vocabulary
    */
-  inline const TemplatedVocabulary<TPolicy>* getVocabulary() const;
+  inline const Vocabulary* getVocabulary() const;
 
   /** 
    * Allocates some memory for the direct and inverted indexes
@@ -145,11 +151,13 @@ public:
     BowVector *bowvec = nullptr, FeatureVector *fvec = nullptr);
 
   /**
-   * Adss an entry to the database and returns its index
+   * Adds an entry to the database and returns its index.
    * @param vec bow vector
    * @param fec feature vector to add the entry. Only necessary if using the
    *   direct index
    * @return id of new entry
+   * @throws std::out_of_range If a word or direct-index node ID is invalid.
+   * @throws std::invalid_argument If a word weight is nonfinite or negative.
    */
   EntryId add(const BowVector &vec, 
     const FeatureVector &fec = FeatureVector() );
@@ -246,6 +254,15 @@ public:
     const std::string &name = "database");
 
 protected:
+
+  /// Validate an externally supplied BoW vector before indexing the inverted file.
+  void validateBowVector(const BowVector &vec) const;
+
+  /// Validate direct-index node IDs against the owned vocabulary.
+  void validateFeatureVector(const FeatureVector &features) const;
+
+  /// Validate the requested number of direct-index parent levels.
+  static void validateDirectIndexLevels(int di_levels);
   
   /// Query with L1 scoring
   void queryL1(const BowVector &vec, QueryResults &ret, 
@@ -321,7 +338,7 @@ protected:
 protected:
 
   /// Associated vocabulary
-  TemplatedVocabulary<TPolicy> *m_voc;
+  Vocabulary m_voc;
   
   /// Flag to use direct index
   bool m_use_di;
@@ -346,19 +363,9 @@ protected:
 template <DescriptorPolicy TPolicy>
 TemplatedDatabase<TPolicy>::TemplatedDatabase
   (bool use_di, int di_levels)
-  : m_voc(NULL), m_use_di(use_di), m_dilevels(di_levels), m_nentries(0)
+  : m_voc(), m_use_di(use_di), m_dilevels(di_levels), m_nentries(0)
 {
-}
-
-// --------------------------------------------------------------------------
-
-template <DescriptorPolicy TPolicy> // Parameter of the enclosing class template.
-template <class T>                  // Parameter of this member-constructor template.
-TemplatedDatabase<TPolicy>::TemplatedDatabase
-  (const T &voc, bool use_di, int di_levels)
-  : m_voc(NULL), m_use_di(use_di), m_dilevels(di_levels)
-{
-  setVocabulary(voc);
+  validateDirectIndexLevels(di_levels);
   clear();
 }
 
@@ -366,10 +373,11 @@ TemplatedDatabase<TPolicy>::TemplatedDatabase
 
 template <DescriptorPolicy TPolicy>
 TemplatedDatabase<TPolicy>::TemplatedDatabase
-  (const TemplatedDatabase<TPolicy> &db)
-  : m_voc(NULL)
+  (const Vocabulary &voc, bool use_di, int di_levels)
+  : m_voc(voc), m_use_di(use_di), m_dilevels(di_levels), m_nentries(0)
 {
-  *this = db;
+  validateDirectIndexLevels(di_levels);
+  clear();
 }
 
 // --------------------------------------------------------------------------
@@ -377,7 +385,7 @@ TemplatedDatabase<TPolicy>::TemplatedDatabase
 template <DescriptorPolicy TPolicy>
 TemplatedDatabase<TPolicy>::TemplatedDatabase
   (const std::string &filename)
-  : m_voc(NULL)
+  : m_voc(), m_use_di(true), m_dilevels(0), m_nentries(0)
 {
   load(filename);
 }
@@ -387,35 +395,9 @@ TemplatedDatabase<TPolicy>::TemplatedDatabase
 template <DescriptorPolicy TPolicy>
 TemplatedDatabase<TPolicy>::TemplatedDatabase
   (const char *filename)
-  : m_voc(NULL)
+  : m_voc(), m_use_di(true), m_dilevels(0), m_nentries(0)
 {
   load(filename);
-}
-
-// --------------------------------------------------------------------------
-
-template <DescriptorPolicy TPolicy>
-TemplatedDatabase<TPolicy>::~TemplatedDatabase(void)
-{
-  delete m_voc;
-}
-
-// --------------------------------------------------------------------------
-
-template <DescriptorPolicy TPolicy>
-TemplatedDatabase<TPolicy>& TemplatedDatabase<TPolicy>::operator=
-  (const TemplatedDatabase<TPolicy> &db)
-{
-  if(this != &db)
-  {
-    m_dfile = db.m_dfile;
-    m_dilevels = db.m_dilevels;
-    m_ifile = db.m_ifile;
-    m_nentries = db.m_nentries;
-    m_use_di = db.m_use_di;
-    setVocabulary(*db.m_voc);
-  }
-  return *this;
 }
 
 // --------------------------------------------------------------------------
@@ -440,23 +422,23 @@ EntryId TemplatedDatabase<TPolicy>::add(
   
   if(m_use_di && fvec != NULL)
   {
-    m_voc->transform(features, v, *fvec, m_dilevels); // with features
+    m_voc.transform(features, v, *fvec, m_dilevels); // with features
     return add(v, *fvec);
   }
   else if(m_use_di)
   {
     FeatureVector fv;
-    m_voc->transform(features, v, fv, m_dilevels); // with features
+    m_voc.transform(features, v, fv, m_dilevels); // with features
     return add(v, fv);
   }
   else if(fvec != NULL)
   {
-    m_voc->transform(features, v, *fvec, m_dilevels); // with features
+    m_voc.transform(features, v, *fvec, m_dilevels); // with features
     return add(v);
   }
   else
   {
-    m_voc->transform(features, v); // with features
+    m_voc.transform(features, v); // with features
     return add(v);
   }
 }
@@ -467,69 +449,129 @@ template <DescriptorPolicy TPolicy>
 EntryId TemplatedDatabase<TPolicy>::add(const BowVector &v,
   const FeatureVector &fv)
 {
-  EntryId entry_id = m_nentries++;
-
-  BowVector::const_iterator vit;
-
+  validateBowVector(v);
   if(m_use_di)
   {
-    // update direct file
-    if(entry_id == m_dfile.size())
+    validateFeatureVector(fv);
+  }
+  if(m_nentries == (std::numeric_limits<int>::max)())
+  {
+    throw std::length_error("Database entry count exceeds the supported range.");
+  }
+
+  const EntryId entry_id = static_cast<EntryId>(m_nentries);
+
+  // Reject an inconsistent direct index before changing either index.
+  if(m_use_di)
+  {
+    if(m_dfile.size() != static_cast<std::size_t>(entry_id))
+    {
+      throw std::logic_error("Database direct index is inconsistent with its entry count.");
+    }
+  }
+
+  try
+  {
+    for(const auto &[word_id, word_weight]: v)
+    {
+      m_ifile[word_id].emplace_back(entry_id, word_weight);
+    }
+    if(m_use_di)
     {
       m_dfile.push_back(fv);
     }
-    else
-    {
-      m_dfile[entry_id] = fv;
-    }
   }
-  
-  // update inverted file
-  for(vit = v.begin(); vit != v.end(); ++vit)
+  catch(...)
   {
-    const WordId& word_id = vit->first;
-    const WordValue& word_weight = vit->second;
-    
-    IFRow& ifrow = m_ifile[word_id];
-    ifrow.push_back(IFPair(entry_id, word_weight));
+    // Roll back rows already appended if a later allocation fails.
+    for(const auto &[word_id, word_weight]: v)
+    {
+      (void)word_weight;
+      IFRow &row = m_ifile[word_id];
+      if(!row.empty() && row.back().entry_id == entry_id)
+      {
+        row.pop_back();
+      }
+    }
+    throw;
   }
-  
+
+  ++m_nentries;
   return entry_id;
 }
 
 // --------------------------------------------------------------------------
 
 template <DescriptorPolicy TPolicy>
-template<class T>
-inline void TemplatedDatabase<TPolicy>::setVocabulary
-  (const T& voc)
+void TemplatedDatabase<TPolicy>::validateBowVector(const BowVector &vec) const
 {
-  delete m_voc;
-  m_voc = new T(voc);
+  for(const auto &[word_id, word_weight]: vec)
+  {
+    if(static_cast<std::size_t>(word_id) >= m_ifile.size())
+    {
+      throw std::out_of_range("BoW vector references a word outside the vocabulary.");
+    }
+    if(!std::isfinite(word_weight) || word_weight < 0.0)
+    {
+      throw std::invalid_argument("BoW vector weights must be finite and nonnegative.");
+    }
+  }
+}
+
+// --------------------------------------------------------------------------
+
+template <DescriptorPolicy TPolicy>
+void TemplatedDatabase<TPolicy>::validateFeatureVector(const FeatureVector &features) const
+{
+  for(const auto &[node_id, feature_ids]: features)
+  {
+    (void)feature_ids;
+    if(!m_voc.isValidNodeId(node_id))
+    {
+      throw std::out_of_range("Feature vector references a node outside the vocabulary.");
+    }
+  }
+}
+
+// --------------------------------------------------------------------------
+
+template <DescriptorPolicy TPolicy>
+void TemplatedDatabase<TPolicy>::validateDirectIndexLevels(const int di_levels)
+{
+  if(di_levels < 0)
+  {
+    throw std::invalid_argument("Direct-index levels must be nonnegative.");
+  }
+}
+
+// --------------------------------------------------------------------------
+
+template <DescriptorPolicy TPolicy>
+inline void TemplatedDatabase<TPolicy>::setVocabulary(const Vocabulary& voc)
+{
+  m_voc = voc;
   clear();
 }
 
 // --------------------------------------------------------------------------
 
 template <DescriptorPolicy TPolicy>
-template<class T>
-inline void TemplatedDatabase<TPolicy>::setVocabulary
-  (const T& voc, bool use_di, int di_levels)
+inline void TemplatedDatabase<TPolicy>::setVocabulary(
+  const Vocabulary& voc, bool use_di, int di_levels)
 {
+  validateDirectIndexLevels(di_levels);
   m_use_di = use_di;
   m_dilevels = di_levels;
-  delete m_voc;
-  m_voc = new T(voc);
-  clear();
+  setVocabulary(voc);
 }
 
 // --------------------------------------------------------------------------
 
 template <DescriptorPolicy TPolicy>
-inline const TemplatedVocabulary<TPolicy>*
+inline const typename TemplatedDatabase<TPolicy>::Vocabulary*
 TemplatedDatabase<TPolicy>::getVocabulary() const
 {
-  return m_voc;
+  return &m_voc;
 }
 
 // --------------------------------------------------------------------------
@@ -537,10 +579,8 @@ TemplatedDatabase<TPolicy>::getVocabulary() const
 template <DescriptorPolicy TPolicy>
 inline void TemplatedDatabase<TPolicy>::clear()
 {
-  // resize vectors
-  m_ifile.resize(0);
-  m_ifile.resize(m_voc->size());
-  m_dfile.resize(0);
+  m_ifile.assign(m_voc.size(), IFRow{});
+  m_dfile.clear();
   m_nentries = 0;
 }
 
@@ -612,7 +652,7 @@ void TemplatedDatabase<TPolicy>::query(
   QueryResults &ret, int max_results, int max_id) const
 {
   BowVector vec;
-  m_voc->transform(features, vec);
+  m_voc.transform(features, vec);
   query(vec, ret, max_results, max_id);
 }
 
@@ -623,9 +663,10 @@ void TemplatedDatabase<TPolicy>::query(
   const BowVector &vec, 
   QueryResults &ret, int max_results, int max_id) const
 {
+  validateBowVector(vec);
   ret.resize(0);
   
-  switch(m_voc->getScoringType())
+  switch(m_voc.getScoringType())
   {
     case L1_NORM:
       queryL1(vec, ret, max_results, max_id);
@@ -852,7 +893,7 @@ void TemplatedDatabase<TPolicy>::queryChiSquare(const BowVector &vec,
         // (v-w)^2/(v+w) - v - w = -4 vw/(v+w)
         // we move the 4 out
         double value = 0;
-        if(qvalue + dvalue != 0.0) // words may have weight zero
+        if(qvalue + dvalue > 0.0) // words may have weight zero
           value = - qvalue * dvalue / (qvalue + dvalue);
         
         pit = pairs.lower_bound(entry_id);
@@ -953,7 +994,7 @@ void TemplatedDatabase<TPolicy>::queryKL(const BowVector &vec,
       if((int)entry_id < max_id || max_id == -1)
       {
         double value = 0;
-        if(vi != 0 && wi != 0) value = vi * log(vi/wi);
+        if(vi > 0.0 && wi > 0.0) value = vi * log(vi/wi);
         
         pit = pairs.lower_bound(entry_id);
         if(pit != pairs.end() && !(pairs.key_comp()(entry_id, pit->first)))
@@ -986,7 +1027,7 @@ void TemplatedDatabase<TPolicy>::queryKL(const BowVector &vec,
       const WordValue &vi = vit->second;
       const IFRow& row = m_ifile[vit->first];
 
-      if(vi != 0)
+      if(vi > 0.0)
       {
         if(row.end() == find(row.begin(), row.end(), eid ))
         {
@@ -1117,7 +1158,7 @@ void TemplatedDatabase<TPolicy>::queryDotProduct(
       if((int)entry_id < max_id || max_id == -1)
       {
         double value; 
-        if(this->m_voc->getWeightingType() == BINARY)
+        if(this->m_voc.getWeightingType() == BINARY)
           value = 1;
         else
           value = qvalue * dvalue;
@@ -1216,7 +1257,7 @@ void TemplatedDatabase<TPolicy>::save(cv::FileStorage &fs,
   // imageId's and nodeId's must be stored in ascending order
   // (according to the construction of the indexes)
 
-  m_voc->save(fs);
+  m_voc.save(fs);
  
   fs << name << "{";
   
@@ -1259,10 +1300,17 @@ void TemplatedDatabase<TPolicy>::save(cv::FileStorage &fs,
       // save info of last_nid
       fs << "{";
       fs << "nodeId" << (int)nid;
-      // msvc++ 2010 with opencv 2.3.1 does not allow FileStorage::operator<<
-      // with vectors of unsigned int
-      fs << "features" << "[" 
-        << *(const std::vector<int>*)(&features) << "]";
+      // Write each value explicitly to avoid aliasing vector<unsigned int> as vector<int>.
+      fs << "features" << "[" << "[";
+      for(const unsigned int feature: features)
+      {
+        if(feature > static_cast<unsigned int>((std::numeric_limits<int>::max)()))
+        {
+          throw std::overflow_error("Feature index exceeds the persistence integer range.");
+        }
+        fs << static_cast<int>(feature);
+      }
+      fs << "]" << "]";
       fs << "}";
     }
     
@@ -1280,7 +1328,10 @@ template <DescriptorPolicy TPolicy>
 void TemplatedDatabase<TPolicy>::load(const std::string &filename)
 {
   cv::FileStorage fs(filename.c_str(), cv::FileStorage::READ);
-  if(!fs.isOpened()) throw std::string("Could not open file ") + filename;
+  if(!fs.isOpened())
+  {
+    throw std::runtime_error("Could not open database file " + filename);
+  }
   
   load(fs);
 }
@@ -1290,77 +1341,178 @@ void TemplatedDatabase<TPolicy>::load(const std::string &filename)
 template <DescriptorPolicy TPolicy>
 void TemplatedDatabase<TPolicy>::load(const cv::FileStorage &fs,
   const std::string &name)
-{ 
-  // load voc first
-  // subclasses must instantiate m_voc before calling this ::load
-  if(!m_voc) m_voc = new TemplatedVocabulary<TPolicy>;
-  
-  m_voc->load(fs);
+{
+  Vocabulary loaded_vocabulary;
+  loaded_vocabulary.load(fs);
 
-  // load database now
-  clear(); // resizes inverted file 
-    
-  cv::FileNode fdb = fs[name];
-  
-  m_nentries = (int)fdb["nEntries"]; 
-  m_use_di = (int)fdb["usingDI"] != 0;
-  m_dilevels = (int)fdb["diLevels"];
-  
-  cv::FileNode fn = fdb["invertedIndex"];
-  for(WordId wid = 0; wid < fn.size(); ++wid)
+  const cv::FileNode database_node = fs[name];
+  if(database_node.empty() || !database_node.isMap())
   {
-    cv::FileNode fw = fn[wid];
-    
-    for(unsigned int i = 0; i < fw.size(); ++i)
+    throw std::runtime_error("Database storage node is missing or is not a map.");
+  }
+
+  const auto read_integer = [](const cv::FileNode &node, const char *key) {
+    const cv::FileNode field = node[key];
+    if(field.empty() || !field.isInt())
     {
-      EntryId eid = (int)fw[i]["imageId"];
-      WordValue v = fw[i]["weight"];
-      
-      m_ifile[wid].push_back(IFPair(eid, v));
+      throw std::runtime_error(std::string("Database field '") + key +
+        "' must be an integer.");
+    }
+    return static_cast<int>(field);
+  };
+
+  const int entry_count = read_integer(database_node, "nEntries");
+  const int direct_index_value = read_integer(database_node, "usingDI");
+  const int direct_index_levels = read_integer(database_node, "diLevels");
+  if(entry_count < 0 || (direct_index_value != 0 && direct_index_value != 1) ||
+    direct_index_levels < 0)
+  {
+    throw std::runtime_error("Database metadata is outside supported ranges.");
+  }
+  const bool use_direct_index = direct_index_value != 0;
+
+  const cv::FileNode serialized_inverted_file = database_node["invertedIndex"];
+  if(!serialized_inverted_file.isSeq() ||
+    serialized_inverted_file.size() != loaded_vocabulary.size())
+  {
+    throw std::runtime_error(
+      "Database inverted index size must match the vocabulary word count.");
+  }
+
+  // Validate all persisted entry references before changing the live database.
+  InvertedFile loaded_inverted_file(loaded_vocabulary.size());
+  for(std::size_t word_index = 0; word_index < serialized_inverted_file.size();
+    ++word_index)
+  {
+    const cv::FileNode serialized_row =
+      serialized_inverted_file[static_cast<int>(word_index)];
+    if(!serialized_row.isSeq())
+    {
+      throw std::runtime_error("Every database inverted-index row must be a sequence.");
+    }
+
+    bool has_previous_entry = false;
+    EntryId previous_entry = 0U;
+    for(std::size_t row_index = 0; row_index < serialized_row.size(); ++row_index)
+    {
+      const cv::FileNode serialized_pair = serialized_row[static_cast<int>(row_index)];
+      if(!serialized_pair.isMap())
+      {
+        throw std::runtime_error("Every inverted-index item must be a map.");
+      }
+
+      const int entry_id_value = read_integer(serialized_pair, "imageId");
+      const cv::FileNode weight_node = serialized_pair["weight"];
+      if(entry_id_value < 0 || entry_id_value >= entry_count || weight_node.empty() ||
+        (!weight_node.isInt() && !weight_node.isReal()))
+      {
+        throw std::runtime_error("Database inverted-index item is outside valid ranges.");
+      }
+
+      const EntryId entry_id = static_cast<EntryId>(entry_id_value);
+      const WordValue weight = static_cast<double>(weight_node);
+      if(!std::isfinite(weight) || weight < 0.0 ||
+        (has_previous_entry && entry_id <= previous_entry))
+      {
+        throw std::runtime_error(
+          "Database inverted-index entries must be finite and strictly ordered.");
+      }
+
+      loaded_inverted_file[word_index].emplace_back(entry_id, weight);
+      previous_entry = entry_id;
+      has_previous_entry = true;
     }
   }
-  
-  if(m_use_di)
+
+  const cv::FileNode serialized_direct_file = database_node["directIndex"];
+  if(!serialized_direct_file.isSeq() ||
+    (use_direct_index && serialized_direct_file.size() !=
+      static_cast<std::size_t>(entry_count)) ||
+    (!use_direct_index && !serialized_direct_file.empty()))
   {
-    fn = fdb["directIndex"];
-    
-    m_dfile.resize(fn.size());
-    assert(m_nentries == (int)fn.size());
-    
-    FeatureVector::iterator dit;
-    for(EntryId eid = 0; eid < fn.size(); ++eid)
+    throw std::runtime_error(
+      "Database direct index is inconsistent with its metadata.");
+  }
+
+  DirectFile loaded_direct_file;
+  if(use_direct_index)
+  {
+    loaded_direct_file.resize(static_cast<std::size_t>(entry_count));
+    for(std::size_t entry_index = 0; entry_index < serialized_direct_file.size();
+      ++entry_index)
     {
-      cv::FileNode fe = fn[eid];
-      
-      m_dfile[eid].clear();
-      for(unsigned int i = 0; i < fe.size(); ++i)
+      const cv::FileNode serialized_entry =
+        serialized_direct_file[static_cast<int>(entry_index)];
+      if(!serialized_entry.isSeq())
       {
-        NodeId nid = (int)fe[i]["nodeId"];
-        
-        dit = m_dfile[eid].insert(m_dfile[eid].end(), 
-          make_pair(nid, std::vector<unsigned int>() ));
-        
-        // this failed to compile with some opencv versions (2.3.1)
-        //fe[i]["features"] >> dit->second;
-        
-        // this was ok until OpenCV 2.4.1
-        //std::vector<int> aux;
-        //fe[i]["features"] >> aux; // OpenCV < 2.4.1
-        //dit->second.resize(aux.size());
-        //std::copy(aux.begin(), aux.end(), dit->second.begin());
-        
-        cv::FileNode ff = fe[i]["features"][0];
-        dit->second.reserve(ff.size());
-                
-        cv::FileNodeIterator ffit;
-        for(ffit = ff.begin(); ffit != ff.end(); ++ffit)
+        throw std::runtime_error("Every database direct-index entry must be a sequence.");
+      }
+
+      FeatureVector &loaded_entry = loaded_direct_file[entry_index];
+      for(std::size_t item_index = 0; item_index < serialized_entry.size(); ++item_index)
+      {
+        const cv::FileNode serialized_item =
+          serialized_entry[static_cast<int>(item_index)];
+        if(!serialized_item.isMap())
         {
-          dit->second.push_back((int)*ffit); 
+          throw std::runtime_error("Every direct-index item must be a map.");
+        }
+
+        const int node_id_value = read_integer(serialized_item, "nodeId");
+        if(node_id_value < 0 ||
+          !loaded_vocabulary.isValidNodeId(static_cast<NodeId>(node_id_value)))
+        {
+          throw std::runtime_error("Database direct index references an unknown node.");
+        }
+
+        const cv::FileNode serialized_features = serialized_item["features"];
+        if(!serialized_features.isSeq())
+        {
+          throw std::runtime_error("Direct-index features must be a sequence.");
+        }
+
+        // Accept both the historical nested sequence and the current flat sequence.
+        cv::FileNode feature_values = serialized_features;
+        if(serialized_features.size() == 1U && serialized_features[0].isSeq())
+        {
+          feature_values = serialized_features[0];
+        }
+        else if(!serialized_features.empty() && serialized_features[0].isSeq())
+        {
+          throw std::runtime_error("Direct-index features have an invalid nested layout.");
+        }
+
+        std::vector<unsigned int> features;
+        features.reserve(feature_values.size());
+        for(const cv::FileNode &feature_node: feature_values)
+        {
+          if(!feature_node.isInt() || static_cast<int>(feature_node) < 0)
+          {
+            throw std::runtime_error("Direct-index feature IDs must be nonnegative integers.");
+          }
+          features.push_back(static_cast<unsigned int>(static_cast<int>(feature_node)));
+        }
+
+        const NodeId node_id = static_cast<NodeId>(node_id_value);
+        const auto [position, inserted] = loaded_entry.emplace(node_id, std::move(features));
+        (void)position;
+        if(!inserted)
+        {
+          throw std::runtime_error("Database direct index contains a duplicate node ID.");
         }
       }
-    } // for each entry
-  } // if use_id
-  
+    }
+  }
+
+  // Assemble a complete snapshot and publish it with one non-throwing move assignment.
+  TemplatedDatabase loaded_database(false);
+  loaded_database.m_voc = std::move(loaded_vocabulary);
+  loaded_database.m_use_di = use_direct_index;
+  loaded_database.m_dilevels = direct_index_levels;
+  loaded_database.m_ifile = std::move(loaded_inverted_file);
+  loaded_database.m_dfile = std::move(loaded_direct_file);
+  loaded_database.m_nentries = entry_count;
+  *this = std::move(loaded_database);
 }
 
 // --------------------------------------------------------------------------

@@ -1,21 +1,21 @@
 /**
- * File: TemplatedVocabulary.h
- * Date: February 2011
- * Author: Dorian Galvez-Lopez
- * Description: templated vocabulary
- * License: see the LICENSE.txt file
- *
+ * @file TemplatedVocabulary.h
+ * @brief Policy-typed hierarchical visual vocabulary.
+ * @author Dorian Galvez-Lopez and Pietro Califano
+ * @date 2026-08-28
+ * @copyright See LICENSE.txt.
  */
 
 #ifndef __D_T_TEMPLATED_VOCABULARY__
 #define __D_T_TEMPLATED_VOCABULARY__
 
 #include <algorithm>
-#include <cassert>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <iterator>
 #include <limits>
+#include <memory>
 #include <numeric>
 #include <opencv2/core.hpp>
 #include <stdexcept>
@@ -30,9 +30,9 @@
 namespace DBoW2
 {
 
+    /// @brief Generic visual vocabulary operating on one descriptor policy.
     /// @tparam TPolicy Static descriptor policy satisfying DescriptorPolicy.
     template <DescriptorPolicy TPolicy>
-    /// @brief Generic visual vocabulary operating on one descriptor policy.
     class TemplatedVocabulary
     {
       public:
@@ -84,9 +84,15 @@ namespace DBoW2
         TemplatedVocabulary(const TemplatedVocabulary<TPolicy> &voc);
 
         /**
+         * @brief Move a vocabulary while preserving its node-pointer index.
+         * @param voc Vocabulary whose owned storage is transferred.
+         */
+        TemplatedVocabulary(TemplatedVocabulary<TPolicy> &&voc) noexcept = default;
+
+        /**
          * Destructor
          */
-        virtual ~TemplatedVocabulary();
+        virtual ~TemplatedVocabulary() = default;
 
         /**
          * Assigns the given vocabulary to this by copying its data and removing
@@ -96,6 +102,14 @@ namespace DBoW2
          */
         TemplatedVocabulary<TPolicy> &operator=(
             const TemplatedVocabulary<TPolicy> &voc);
+
+        /**
+         * @brief Replace this vocabulary by transferring another vocabulary's storage.
+         * @param voc Vocabulary whose owned storage is transferred.
+         * @return Reference to this vocabulary.
+         */
+        TemplatedVocabulary<TPolicy> &operator=(
+            TemplatedVocabulary<TPolicy> &&voc) noexcept = default;
 
         /**
          * Creates a vocabulary from the training features with the already
@@ -155,6 +169,7 @@ namespace DBoW2
          * @param v (out) bow vector
          * @param fv (out) feature vector of nodes and feature indexes
          * @param levelsup levels to go up the vocabulary tree to get the node index
+         * @throws std::invalid_argument If levelsup is negative.
          */
         virtual void transform(const std::vector<DescriptorType<TPolicy>> &features,
                                BowVector &v, FeatureVector &fv, int levelsup) const;
@@ -165,6 +180,7 @@ namespace DBoW2
          * @param v Output normalized word vector.
          * @param fv Output node-to-feature-index map.
          * @param levelsup Levels above each word used for direct-index nodes.
+         * @throws std::invalid_argument If levelsup is negative.
          */
         void transform(std::span<const DescriptorType<TPolicy>> features,
                        BowVector &v, FeatureVector &fv, int levelsup) const;
@@ -191,6 +207,7 @@ namespace DBoW2
          * @param levelsup 0..L
          * @return node id. if levelsup is 0, returns the node id associated to the
          *   word id
+         * @throws std::out_of_range If wid does not belong to the vocabulary.
          */
         virtual NodeId getParentNode(WordId wid, int levelsup) const;
 
@@ -199,6 +216,7 @@ namespace DBoW2
          * by traversing any of the branches that goes down from the node
          * @param nid starting node id
          * @param words ids of words
+         * @throws std::out_of_range If nid does not belong to the vocabulary.
          */
         void getWordsFromNode(NodeId nid, std::vector<WordId> &words) const;
 
@@ -216,7 +234,7 @@ namespace DBoW2
 
         /**
          * Returns the real depth levels of the tree on average
-         * @return average of depth levels of leaves
+         * @return Average depth of the leaves, or zero for an empty vocabulary.
          */
         float getEffectiveLevels() const;
 
@@ -224,13 +242,22 @@ namespace DBoW2
          * Returns the descriptor of a word
          * @param wid word id
          * @return descriptor
+         * @throws std::out_of_range If wid does not belong to the vocabulary.
          */
         virtual inline DescriptorType<TPolicy> getWord(WordId wid) const;
+
+        /**
+         * @brief Return whether a node identifier belongs to this vocabulary.
+         * @param nid Candidate node identifier.
+         * @return True when nid can be used to index the vocabulary tree.
+         */
+        [[nodiscard]] inline bool isValidNodeId(NodeId nid) const;
 
         /**
          * Returns the weight of a word
          * @param wid word id
          * @return weight
+         * @throws std::out_of_range If wid does not belong to the vocabulary.
          */
         virtual inline WordValue getWordWeight(WordId wid) const;
 
@@ -350,6 +377,21 @@ namespace DBoW2
          */
         void createScoringObject();
 
+        /** Validate tree parameters and enumeration-backed strategy values. */
+        static void ValidateConfiguration(int k, int L, WeightingType weighting,
+                                          ScoringType scoring);
+
+        /** Validate that training input is non-empty and satisfies the descriptor policy. */
+        static void ValidateTrainingFeatures(
+            const std::vector<std::vector<DescriptorType<TPolicy>>> &training_features);
+
+        /** Validate a public word identifier before indexing vocabulary-owned storage. */
+        void validateWordId(WordId wid) const;
+
+        /** Build a vocabulary after all external inputs have been validated. */
+        void createValidated(
+            const std::vector<std::vector<DescriptorType<TPolicy>>> &training_features);
+
         /**
          * Returns a set of pointers to descriptores
          * @param training_features all the features
@@ -455,7 +497,7 @@ namespace DBoW2
         ScoringType m_scoring;
 
         /// Object for computing scores
-        GeneralScoring *m_scoring_object;
+        std::unique_ptr<GeneralScoring> m_scoring_object;
 
         /// Tree nodes
         std::vector<Node> m_nodes;
@@ -469,17 +511,20 @@ namespace DBoW2
     // --------------------------------------------------------------------------
 
     template <DescriptorPolicy TPolicy>
-    TemplatedVocabulary<TPolicy>::TemplatedVocabulary(int k, int L, WeightingType weighting, ScoringType scoring)
+    TemplatedVocabulary<TPolicy>::TemplatedVocabulary(
+        int k, int L, WeightingType weighting, ScoringType scoring)
         : m_k(k), m_L(L), m_weighting(weighting), m_scoring(scoring),
-          m_scoring_object(NULL)
+          m_scoring_object(nullptr)
     {
+        ValidateConfiguration(k, L, weighting, scoring);
         createScoringObject();
     }
 
     // --------------------------------------------------------------------------
 
     template <DescriptorPolicy TPolicy>
-    TemplatedVocabulary<TPolicy>::TemplatedVocabulary(const std::string &filename) : m_scoring_object(NULL)
+    TemplatedVocabulary<TPolicy>::TemplatedVocabulary(const std::string &filename)
+        : m_scoring_object(nullptr)
     {
         load(filename);
     }
@@ -487,7 +532,8 @@ namespace DBoW2
     // --------------------------------------------------------------------------
 
     template <DescriptorPolicy TPolicy>
-    TemplatedVocabulary<TPolicy>::TemplatedVocabulary(const char *filename) : m_scoring_object(NULL)
+    TemplatedVocabulary<TPolicy>::TemplatedVocabulary(const char *filename)
+        : m_scoring_object(nullptr)
     {
         load(filename);
     }
@@ -497,34 +543,34 @@ namespace DBoW2
     template <DescriptorPolicy TPolicy>
     void TemplatedVocabulary<TPolicy>::createScoringObject()
     {
-        delete m_scoring_object;
-        m_scoring_object = NULL;
-
         switch (m_scoring)
         {
         case L1_NORM:
-            m_scoring_object = new L1Scoring;
+            m_scoring_object = std::make_unique<L1Scoring>();
             break;
 
         case L2_NORM:
-            m_scoring_object = new L2Scoring;
+            m_scoring_object = std::make_unique<L2Scoring>();
             break;
 
         case CHI_SQUARE:
-            m_scoring_object = new ChiSquareScoring;
+            m_scoring_object = std::make_unique<ChiSquareScoring>();
             break;
 
         case KL:
-            m_scoring_object = new KLScoring;
+            m_scoring_object = std::make_unique<KLScoring>();
             break;
 
         case BHATTACHARYYA:
-            m_scoring_object = new BhattacharyyaScoring;
+            m_scoring_object = std::make_unique<BhattacharyyaScoring>();
             break;
 
         case DOT_PRODUCT:
-            m_scoring_object = new DotProductScoring;
+            m_scoring_object = std::make_unique<DotProductScoring>();
             break;
+
+        default:
+            throw std::invalid_argument("Unsupported vocabulary scoring type.");
         }
     }
 
@@ -533,6 +579,7 @@ namespace DBoW2
     template <DescriptorPolicy TPolicy>
     void TemplatedVocabulary<TPolicy>::setScoringType(ScoringType type)
     {
+        ValidateConfiguration(m_k, m_L, m_weighting, type);
         m_scoring = type;
         createScoringObject();
     }
@@ -542,6 +589,7 @@ namespace DBoW2
     template <DescriptorPolicy TPolicy>
     void TemplatedVocabulary<TPolicy>::setWeightingType(WeightingType type)
     {
+        ValidateConfiguration(m_k, m_L, type, m_scoring);
         this->m_weighting = type;
     }
 
@@ -550,17 +598,21 @@ namespace DBoW2
     template <DescriptorPolicy TPolicy>
     TemplatedVocabulary<TPolicy>::TemplatedVocabulary(
         const TemplatedVocabulary<TPolicy> &voc)
-        : m_scoring_object(NULL)
+        : m_k(voc.m_k), m_L(voc.m_L), m_weighting(voc.m_weighting),
+          m_scoring(voc.m_scoring), m_scoring_object(nullptr), m_nodes(voc.m_nodes)
     {
-        *this = voc;
-    }
+        createScoringObject();
+        for (std::size_t index = 1; index < m_nodes.size(); ++index)
+        {
+            m_nodes[index].descriptor = TPolicy::Clone(voc.m_nodes[index].descriptor);
+        }
 
-    // --------------------------------------------------------------------------
-
-    template <DescriptorPolicy TPolicy>
-    TemplatedVocabulary<TPolicy>::~TemplatedVocabulary()
-    {
-        delete m_scoring_object;
+        // Preserve the persisted word-ID mapping instead of renumbering leaves by node order.
+        m_words.resize(voc.m_words.size());
+        for (std::size_t word_id = 0; word_id < m_words.size(); ++word_id)
+        {
+            m_words[word_id] = &m_nodes[voc.m_words[word_id]->id];
+        }
     }
 
     // --------------------------------------------------------------------------
@@ -569,23 +621,13 @@ namespace DBoW2
     TemplatedVocabulary<TPolicy> &
     TemplatedVocabulary<TPolicy>::operator=(const TemplatedVocabulary<TPolicy> &voc)
     {
-        this->m_k = voc.m_k;
-        this->m_L = voc.m_L;
-        this->m_scoring = voc.m_scoring;
-        this->m_weighting = voc.m_weighting;
-
-        this->createScoringObject();
-
-        this->m_nodes.clear();
-        this->m_words.clear();
-
-        this->m_nodes = voc.m_nodes;
-        for (std::size_t index = 1; index < this->m_nodes.size(); ++index)
+        if (this == &voc)
         {
-            this->m_nodes[index].descriptor =
-                TPolicy::Clone(voc.m_nodes[index].descriptor);
+            return *this;
         }
-        this->createWords();
+
+        TemplatedVocabulary copied(voc);
+        *this = std::move(copied);
 
         return *this;
     }
@@ -593,15 +635,85 @@ namespace DBoW2
     // --------------------------------------------------------------------------
 
     template <DescriptorPolicy TPolicy>
-    void TemplatedVocabulary<TPolicy>::create(
+    void TemplatedVocabulary<TPolicy>::ValidateConfiguration(
+        const int k, const int L, const WeightingType weighting, const ScoringType scoring)
+    {
+        if (k < 2 || L < 1 || weighting < TF_IDF || weighting > BINARY ||
+            scoring < L1_NORM || scoring > DOT_PRODUCT)
+        {
+            throw std::invalid_argument(
+                "Vocabulary requires k >= 2, L >= 1, and supported weighting/scoring types.");
+        }
+    }
+
+    // --------------------------------------------------------------------------
+
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::ValidateTrainingFeatures(
         const std::vector<std::vector<DescriptorType<TPolicy>>> &training_features)
     {
+        std::size_t descriptor_count = 0U;
+        for (const auto &frame_descriptors : training_features)
+        {
+            for (const DescriptorType<TPolicy> &descriptor : frame_descriptors)
+            {
+                if (descriptor_count ==
+                    static_cast<std::size_t>((std::numeric_limits<int>::max)()))
+                {
+                    throw std::length_error(
+                        "Vocabulary training descriptor count exceeds the index range.");
+                }
+                TPolicy::Validate(descriptor);
+                ++descriptor_count;
+            }
+        }
+        if (descriptor_count == 0U)
+        {
+            throw std::invalid_argument(
+                "Vocabulary training requires at least one valid descriptor.");
+        }
+    }
+
+    // --------------------------------------------------------------------------
+
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::validateWordId(const WordId wid) const
+    {
+        if (static_cast<std::size_t>(wid) >= m_words.size())
+        {
+            throw std::out_of_range("Word ID does not belong to this vocabulary.");
+        }
+    }
+
+    // --------------------------------------------------------------------------
+
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::createValidated(
+        const std::vector<std::vector<DescriptorType<TPolicy>>> &training_features)
+    {
+        // Compute the complete k-ary tree bound without floating-point overflow or division.
+        std::size_t expected_nodes = 1U;
+        std::size_t nodes_at_level = 1U;
+        for (int level = 1; level <= m_L; ++level)
+        {
+            const std::size_t branching_factor = static_cast<std::size_t>(m_k);
+            if (nodes_at_level >
+                    ((std::numeric_limits<std::size_t>::max)() - expected_nodes) /
+                        branching_factor)
+            {
+                throw std::length_error("Vocabulary tree parameters exceed the size range.");
+            }
+            nodes_at_level *= branching_factor;
+            expected_nodes += nodes_at_level;
+        }
+        if (expected_nodes > m_nodes.max_size() ||
+            expected_nodes > static_cast<std::size_t>((std::numeric_limits<NodeId>::max)()))
+        {
+            throw std::length_error("Vocabulary tree exceeds the supported node range.");
+        }
+
         m_nodes.clear();
         m_words.clear();
-
-        // expected_nodes = Sum_{i=0..L} ( k^i )
-        int expected_nodes =
-            (int)((pow((double)m_k, (double)m_L + 1) - 1) / (m_k - 1));
 
         m_nodes.reserve(expected_nodes); // avoid allocations when creating the tree
 
@@ -625,13 +737,26 @@ namespace DBoW2
 
     template <DescriptorPolicy TPolicy>
     void TemplatedVocabulary<TPolicy>::create(
+        const std::vector<std::vector<DescriptorType<TPolicy>>> &training_features)
+    {
+        ValidateConfiguration(m_k, m_L, m_weighting, m_scoring);
+        ValidateTrainingFeatures(training_features);
+        createValidated(training_features);
+    }
+
+    // --------------------------------------------------------------------------
+
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::create(
         const std::vector<std::vector<DescriptorType<TPolicy>>> &training_features,
         int k, int L)
     {
+        ValidateConfiguration(k, L, m_weighting, m_scoring);
+        ValidateTrainingFeatures(training_features);
         m_k = k;
         m_L = L;
 
-        create(training_features);
+        createValidated(training_features);
     }
 
     // --------------------------------------------------------------------------
@@ -641,13 +766,15 @@ namespace DBoW2
         const std::vector<std::vector<DescriptorType<TPolicy>>> &training_features,
         int k, int L, WeightingType weighting, ScoringType scoring)
     {
+        ValidateConfiguration(k, L, weighting, scoring);
+        ValidateTrainingFeatures(training_features);
         m_k = k;
         m_L = L;
         m_weighting = weighting;
         m_scoring = scoring;
         createScoringObject();
 
-        create(training_features);
+        createValidated(training_features);
     }
 
     // --------------------------------------------------------------------------
@@ -684,8 +811,8 @@ namespace DBoW2
 
         // features associated to each cluster
         std::vector<DescriptorType<TPolicy>> clusters;
-        std::vector<std::vector<unsigned int>> groups; // groups[i] = [j1, j2, ...]
-                                                       // j1, j2, ... indices of descriptors associated to cluster i
+        // groups[i] stores descriptor indices associated with cluster i.
+        std::vector<std::vector<unsigned int>> groups;
 
         clusters.reserve(m_k);
         groups.reserve(m_k);
@@ -783,8 +910,10 @@ namespace DBoW2
 
                     // assoc.ref<unsigned char>(icluster, d) = 1;
 
-                    groups[icluster].push_back(fit - descriptors.begin());
-                    current_association[fit - descriptors.begin()] = icluster;
+                    const auto feature_index = static_cast<unsigned int>(
+                        std::distance(descriptors.begin(), fit));
+                    groups[icluster].push_back(feature_index);
+                    current_association[feature_index] = icluster;
                 }
 
                 // kmeans++ ensures all the clusters has any feature associated with them
@@ -823,7 +952,7 @@ namespace DBoW2
         // create nodes
         for (unsigned int i = 0; i < clusters.size(); ++i)
         {
-            NodeId id = m_nodes.size();
+            const NodeId id = static_cast<NodeId>(m_nodes.size());
             m_nodes.push_back(Node(id));
             m_nodes.back().descriptor = TPolicy::Clone(clusters[i]);
             m_nodes.back().parent = parent_id;
@@ -890,7 +1019,8 @@ namespace DBoW2
 
         // 1.
 
-        int ifeature = RandomInt(0, pfeatures.size() - 1);
+        std::size_t ifeature = static_cast<std::size_t>(
+            RandomInt(0, static_cast<int>(pfeatures.size() - 1U)));
 
         // create first cluster
         clusters.push_back(TPolicy::Clone(*pfeatures[ifeature]));
@@ -927,7 +1057,7 @@ namespace DBoW2
                 do
                 {
                     cut_d = RandomValue<double>(0, dist_sum);
-                } while (cut_d == 0.0);
+                } while (cut_d <= 0.0);
 
                 double d_up_now = 0;
                 for (dit = min_dists.begin(); dit != min_dists.end(); ++dit)
@@ -938,9 +1068,10 @@ namespace DBoW2
                 }
 
                 if (dit == min_dists.end())
-                    ifeature = pfeatures.size() - 1;
+                    ifeature = pfeatures.size() - 1U;
                 else
-                    ifeature = dit - min_dists.begin();
+                    ifeature = static_cast<std::size_t>(
+                        std::distance(min_dists.begin(), dit));
 
                 clusters.push_back(TPolicy::Clone(*pfeatures[ifeature]));
 
@@ -956,11 +1087,13 @@ namespace DBoW2
     template <DescriptorPolicy TPolicy>
     void TemplatedVocabulary<TPolicy>::createWords()
     {
-        m_words.resize(0);
+        m_words.clear();
 
         if (!m_nodes.empty())
         {
-            m_words.reserve((int)pow((double)m_k, (double)m_L));
+            // Reserve the single-pass upper bound instead of traversing all nodes twice merely
+            // to determine the exact number of leaves.
+            m_words.reserve(m_nodes.size() - 1U);
 
             typename std::vector<Node>::iterator nit;
 
@@ -969,7 +1102,7 @@ namespace DBoW2
             {
                 if (nit->isLeaf())
                 {
-                    nit->word_id = m_words.size();
+                    nit->word_id = static_cast<WordId>(m_words.size());
                     m_words.push_back(&(*nit));
                 }
             }
@@ -982,13 +1115,13 @@ namespace DBoW2
     void TemplatedVocabulary<TPolicy>::setNodeWeights(
         const std::vector<std::vector<DescriptorType<TPolicy>>> &training_features)
     {
-        const unsigned int NWords = m_words.size();
-        const unsigned int NDocs = training_features.size();
+        const std::size_t word_count = m_words.size();
+        const double document_count = static_cast<double>(training_features.size());
 
         if (m_weighting == TF || m_weighting == BINARY)
         {
             // idf part must be 1 always
-            for (unsigned int i = 0; i < NWords; i++)
+            for (std::size_t i = 0; i < word_count; ++i)
                 m_words[i]->weight = 1;
         }
         else if (m_weighting == IDF || m_weighting == TF_IDF)
@@ -998,8 +1131,8 @@ namespace DBoW2
             // Note: this actually calculates the idf part of the tf-idf score.
             // The complete tf-idf score is calculated in ::transform
 
-            std::vector<unsigned int> Ni(NWords, 0);
-            std::vector<bool> counted(NWords, false);
+            std::vector<std::size_t> document_frequencies(word_count, 0U);
+            std::vector<bool> counted(word_count, false);
 
             typename std::vector<std::vector<DescriptorType<TPolicy>>>::const_iterator mit;
             typename std::vector<DescriptorType<TPolicy>>::const_iterator fit;
@@ -1015,18 +1148,19 @@ namespace DBoW2
 
                     if (!counted[word_id])
                     {
-                        Ni[word_id]++;
+                        ++document_frequencies[word_id];
                         counted[word_id] = true;
                     }
                 }
             }
 
             // set ln(N/Ni)
-            for (unsigned int i = 0; i < NWords; i++)
+            for (std::size_t i = 0; i < word_count; ++i)
             {
-                if (Ni[i] > 0)
+                if (document_frequencies[i] > 0U)
                 {
-                    m_words[i]->weight = log((double)NDocs / (double)Ni[i]);
+                    m_words[i]->weight =
+                        log(document_count / static_cast<double>(document_frequencies[i]));
                 } // else // This cannot occur if using kmeans++
             }
         }
@@ -1037,7 +1171,7 @@ namespace DBoW2
     template <DescriptorPolicy TPolicy>
     inline unsigned int TemplatedVocabulary<TPolicy>::size() const
     {
-        return m_words.size();
+        return static_cast<unsigned int>(m_words.size());
     }
 
     // --------------------------------------------------------------------------
@@ -1053,17 +1187,23 @@ namespace DBoW2
     template <DescriptorPolicy TPolicy>
     float TemplatedVocabulary<TPolicy>::getEffectiveLevels() const
     {
-        long sum = 0;
+        if (m_words.empty())
+        {
+            return 0.0F;
+        }
+
+        std::size_t depth_sum = 0U;
         typename std::vector<Node *>::const_iterator wit;
         for (wit = m_words.begin(); wit != m_words.end(); ++wit)
         {
             const Node *p = *wit;
 
-            for (; p->id != 0; sum++)
+            for (; p->id != 0; ++depth_sum)
                 p = &m_nodes[p->parent];
         }
 
-        return (float)((double)sum / (double)m_words.size());
+        return static_cast<float>(static_cast<double>(depth_sum) /
+                                  static_cast<double>(m_words.size()));
     }
 
     // --------------------------------------------------------------------------
@@ -1071,7 +1211,16 @@ namespace DBoW2
     template <DescriptorPolicy TPolicy>
     DescriptorType<TPolicy> TemplatedVocabulary<TPolicy>::getWord(WordId wid) const
     {
-        return m_words[wid]->descriptor;
+        validateWordId(wid);
+        return TPolicy::Clone(m_words[wid]->descriptor);
+    }
+
+    // --------------------------------------------------------------------------
+
+    template <DescriptorPolicy TPolicy>
+    bool TemplatedVocabulary<TPolicy>::isValidNodeId(const NodeId nid) const
+    {
+        return static_cast<std::size_t>(nid) < m_nodes.size();
     }
 
     // --------------------------------------------------------------------------
@@ -1079,6 +1228,7 @@ namespace DBoW2
     template <DescriptorPolicy TPolicy>
     WordValue TemplatedVocabulary<TPolicy>::getWordWeight(WordId wid) const
     {
+        validateWordId(wid);
         return m_words[wid]->weight;
     }
 
@@ -1141,7 +1291,7 @@ namespace DBoW2
             if (!v.empty() && !must)
             {
                 // unnecessary when normalizing
-                const double nd = v.size();
+                const double nd = static_cast<double>(v.size());
                 for (BowVector::iterator vit = v.begin(); vit != v.end(); vit++)
                     vit->second /= nd;
             }
@@ -1184,6 +1334,11 @@ namespace DBoW2
         const std::span<const DescriptorType<TPolicy>> features,
         BowVector &v, FeatureVector &fv, int levelsup) const
     {
+        if (levelsup < 0)
+        {
+            throw std::invalid_argument("Direct-index levels must be nonnegative.");
+        }
+
         v.clear();
         fv.clear();
 
@@ -1219,7 +1374,7 @@ namespace DBoW2
             if (!v.empty() && !must)
             {
                 // unnecessary when normalizing
-                const double nd = v.size();
+                const double nd = static_cast<double>(v.size());
                 for (BowVector::iterator vit = v.begin(); vit != v.end(); vit++)
                     vit->second /= nd;
             }
@@ -1276,30 +1431,25 @@ namespace DBoW2
         NodeId *nid,
         int levelsup) const
     {
+        if (levelsup < 0)
+        {
+            throw std::invalid_argument("Direct-index levels must be nonnegative.");
+        }
+
         // propagate the feature down the tree
-        std::vector<NodeId> nodes;
-        typename std::vector<NodeId>::const_iterator nit;
-
-        // level at which the node must be stored in nid, if given
-        const int nid_level = m_L - levelsup;
-        if (nid_level <= 0 && nid != NULL)
-            *nid = 0; // root
-
         NodeId final_id = 0; // root
-        int current_level = 0;
 
         do
         {
-            ++current_level;
-            nodes = m_nodes[final_id].children;
-            final_id = nodes[0];
+            const std::vector<NodeId> &children = m_nodes[final_id].children;
+            final_id = children.front();
 
             double best_d = TPolicy::Distance(feature, m_nodes[final_id].descriptor);
 
-            for (nit = nodes.begin() + 1; nit != nodes.end(); ++nit)
+            for (auto child = children.begin() + 1; child != children.end(); ++child)
             {
-                NodeId id = *nit;
-                double d = TPolicy::Distance(feature, m_nodes[id].descriptor);
+                const NodeId id = *child;
+                const double d = TPolicy::Distance(feature, m_nodes[id].descriptor);
                 if (d < best_d)
                 {
                     best_d = d;
@@ -1307,10 +1457,17 @@ namespace DBoW2
                 }
             }
 
-            if (nid != NULL && current_level == nid_level)
-                *nid = final_id;
-
         } while (!m_nodes[final_id].isLeaf());
+
+        // Resolve the direct-index node from the actual leaf so shallow branches remain valid.
+        if (nid != nullptr)
+        {
+            *nid = final_id;
+            for (int level = 0; level < levelsup && *nid != 0U; ++level)
+            {
+                *nid = m_nodes[*nid].parent;
+            }
+        }
 
         // turn node id into word id
         word_id = m_nodes[final_id].word_id;
@@ -1322,6 +1479,7 @@ namespace DBoW2
     template <DescriptorPolicy TPolicy>
     NodeId TemplatedVocabulary<TPolicy>::getParentNode(WordId wid, int levelsup) const
     {
+        validateWordId(wid);
         NodeId ret = m_words[wid]->id;   // node id
         while (levelsup > 0 && ret != 0) // ret == 0 --> root
         {
@@ -1336,6 +1494,11 @@ namespace DBoW2
     template <DescriptorPolicy TPolicy>
     void TemplatedVocabulary<TPolicy>::getWordsFromNode(NodeId nid, std::vector<WordId> &words) const
     {
+        if (!isValidNodeId(nid))
+        {
+            throw std::out_of_range("Node ID does not belong to this vocabulary.");
+        }
+
         words.clear();
 
         if (m_nodes[nid].isLeaf())
@@ -1499,7 +1662,7 @@ namespace DBoW2
         typename std::vector<Node *>::const_iterator wit;
         for (wit = m_words.begin(); wit != m_words.end(); wit++)
         {
-            WordId id = wit - m_words.begin();
+            const WordId id = static_cast<WordId>(std::distance(m_words.begin(), wit));
             f << "{:";
             f << "wordId" << (int)id;
             f << "nodeId" << (int)(*wit)->id;
@@ -1536,7 +1699,7 @@ namespace DBoW2
         const int depth_levels = read_integer(vocabulary_node, "L");
         const int scoring_value = read_integer(vocabulary_node, "scoringType");
         const int weighting_value = read_integer(vocabulary_node, "weightingType");
-        if (branching_factor <= 0 || depth_levels <= 0 ||
+        if (branching_factor < 2 || depth_levels <= 0 ||
             scoring_value < static_cast<int>(L1_NORM) ||
             scoring_value > static_cast<int>(DOT_PRODUCT) ||
             weighting_value < static_cast<int>(TF_IDF) ||
@@ -1606,9 +1769,10 @@ namespace DBoW2
                     "Vocabulary node weight and descriptor have invalid storage types.");
             }
             const WordValue weight = static_cast<double>(weight_node);
-            if (!std::isfinite(weight))
+            if (!std::isfinite(weight) || weight < 0.0)
             {
-                throw std::runtime_error("Vocabulary node weight must be finite.");
+                throw std::runtime_error(
+                    "Vocabulary node weight must be finite and nonnegative.");
             }
 
             Node &node = loaded_nodes[node_id];
@@ -1701,17 +1865,20 @@ namespace DBoW2
             }
         }
 
-        m_k = branching_factor;
-        m_L = depth_levels;
-        m_scoring = static_cast<ScoringType>(scoring_value);
-        m_weighting = static_cast<WeightingType>(weighting_value);
-        createScoringObject();
-        m_nodes = std::move(loaded_nodes);
-        m_words.resize(word_count);
+        TemplatedVocabulary loaded_vocabulary(
+            branching_factor, depth_levels,
+            static_cast<WeightingType>(weighting_value),
+            static_cast<ScoringType>(scoring_value));
+        loaded_vocabulary.m_nodes = std::move(loaded_nodes);
+        loaded_vocabulary.m_words.resize(word_count);
         for (std::size_t word_id = 0; word_id < word_count; ++word_id)
         {
-            m_words[word_id] = &m_nodes[word_nodes[word_id]];
+            loaded_vocabulary.m_words[word_id] =
+                &loaded_vocabulary.m_nodes[word_nodes[word_id]];
         }
+
+        // Publish only after every allocation and pointer relationship is complete.
+        *this = std::move(loaded_vocabulary);
     }
 
     // --------------------------------------------------------------------------

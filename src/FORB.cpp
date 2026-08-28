@@ -1,17 +1,20 @@
 /**
- * File: FORB.cpp
- * Date: June 2012
- * Author: Dorian Galvez-Lopez
- * Description: functions for ORB descriptors
- * License: see the LICENSE.txt file
- *
+ * @file FORB.cpp
+ * @brief ORB descriptor policy and backward-compatible helper definitions.
+ * @author Dorian Galvez-Lopez and Pietro Califano
+ * @date 2026-08-28
+ * @copyright See LICENSE.txt.
  */
  
+#include <algorithm>
+#include <array>
+#include <bit>
+#include <cstring>
+#include <cstdint>
+#include <limits>
 #include <vector>
 #include <string>
 #include <sstream>
-#include <stdint.h>
-#include <limits.h>
 #include <locale>
 #include <stdexcept>
 #include <utility>
@@ -30,7 +33,7 @@ FORB::Descriptor FORB::Clone(const Descriptor &descriptor)
 
 // --------------------------------------------------------------------------
 
-void FORB::meanValue(const std::vector<FORB::pDescriptor> &descriptors, 
+void FORB::meanValue(const std::vector<FORB::pDescriptor> &descriptors,
   FORB::TDescriptor &mean)
 {
   if(descriptors.empty())
@@ -38,164 +41,56 @@ void FORB::meanValue(const std::vector<FORB::pDescriptor> &descriptors,
     mean.release();
     return;
   }
-  else if(descriptors.size() == 1)
-  {
-    mean = descriptors[0]->clone();
-  }
-  else
-  {
-    vector<int> sum(FORB::L * 8, 0);
-    
-    for(size_t i = 0; i < descriptors.size(); ++i)
-    {
-      const cv::Mat &d = *descriptors[i];
-      const unsigned char *p = d.ptr<unsigned char>();
-      
-      for(int j = 0; j < d.cols; ++j, ++p)
-      {
-        if(*p & (1 << 7)) ++sum[ j*8     ];
-        if(*p & (1 << 6)) ++sum[ j*8 + 1 ];
-        if(*p & (1 << 5)) ++sum[ j*8 + 2 ];
-        if(*p & (1 << 4)) ++sum[ j*8 + 3 ];
-        if(*p & (1 << 3)) ++sum[ j*8 + 4 ];
-        if(*p & (1 << 2)) ++sum[ j*8 + 5 ];
-        if(*p & (1 << 1)) ++sum[ j*8 + 6 ];
-        if(*p & (1))      ++sum[ j*8 + 7 ];
-      }
-    }
-    
-    mean = cv::Mat::zeros(1, FORB::L, CV_8U);
-    unsigned char *p = mean.ptr<unsigned char>();
-    
-    const int N2 = (int)descriptors.size() / 2 + descriptors.size() % 2;
-    for(size_t i = 0; i < sum.size(); ++i)
-    {
-      if(sum[i] >= N2)
-      {
-        // set bit
-        *p |= 1 << (7 - (i % 8));
-      }
-      
-      if(i % 8 == 7) ++p;
-    }
-  }
+
+  mean = Mean(descriptors);
 }
 
 // --------------------------------------------------------------------------
   
-double FORB::distance(const FORB::TDescriptor &a, 
+double FORB::distance(const FORB::TDescriptor &a,
   const FORB::TDescriptor &b)
 {
-  // Bit count function got from:
-  // http://graphics.stanford.edu/~seander/bithacks.html#CountBitsSetKernighan
-  // This implementation assumes that a.cols (CV_8U) % sizeof(uint64_t) == 0
-  
-  const uint64_t *pa, *pb;
-  pa = a.ptr<uint64_t>(); // a & b are actually CV_8U
-  pb = b.ptr<uint64_t>(); 
-  
-  uint64_t v, ret = 0;
-  for(size_t i = 0; i < a.cols / sizeof(uint64_t); ++i, ++pa, ++pb)
-  {
-    v = *pa ^ *pb;
-    v = v - ((v >> 1) & (uint64_t)~(uint64_t)0/3);
-    v = (v & (uint64_t)~(uint64_t)0/15*3) + ((v >> 2) & 
-      (uint64_t)~(uint64_t)0/15*3);
-    v = (v + (v >> 4)) & (uint64_t)~(uint64_t)0/255*15;
-    ret += (uint64_t)(v * ((uint64_t)~(uint64_t)0/255)) >> 
-      (sizeof(uint64_t) - 1) * CHAR_BIT;
-  }
-  
-  return static_cast<double>(ret);
-  
-  // // If uint64_t is not defined in your system, you can try this 
-  // // portable approach (requires DUtils from DLib)
-  // const unsigned char *pa, *pb;
-  // pa = a.ptr<unsigned char>();
-  // pb = b.ptr<unsigned char>();
-  // 
-  // int ret = 0;
-  // for(int i = 0; i < a.cols; ++i, ++pa, ++pb)
-  // {
-  //   ret += DUtils::LUT::ones8bits[ *pa ^ *pb ];
-  // }
-  //  
-  // return ret;
+  return Distance(a, b);
 }
 
 // --------------------------------------------------------------------------
   
 std::string FORB::toString(const FORB::TDescriptor &a)
 {
-  stringstream ss;
-  const unsigned char *p = a.ptr<unsigned char>();
-  
-  for(int i = 0; i < a.cols; ++i, ++p)
-  {
-    ss << (int)*p << " ";
-  }
-  
-  return ss.str();
+  return Serialize(a) + ' ';
 }
 
 // --------------------------------------------------------------------------
   
 void FORB::fromString(FORB::TDescriptor &a, const std::string &s)
 {
-  a.create(1, FORB::L, CV_8U);
-  unsigned char *p = a.ptr<unsigned char>();
-  
-  stringstream ss(s);
-  for(int i = 0; i < FORB::L; ++i, ++p)
+  if(!Deserialize(s, a))
   {
-    int n;
-    ss >> n;
-    
-    if(!ss.fail()) 
-      *p = (unsigned char)n;
+    throw std::invalid_argument("ORB descriptor text must contain exactly 32 byte values.");
   }
-  
 }
 
 // --------------------------------------------------------------------------
 
-void FORB::toMat32F(const std::vector<TDescriptor> &descriptors, 
+void FORB::toMat32F(const std::vector<TDescriptor> &descriptors,
   cv::Mat &mat)
 {
-  if(descriptors.empty())
-  {
-    mat.release();
-    return;
-  }
-  
-  const size_t N = descriptors.size();
-  
-  mat.create(N, FORB::L*8, CV_32F);
-  float *p = mat.ptr<float>();
-  
-  for(size_t i = 0; i < N; ++i)
-  {
-    const int C = descriptors[i].cols;
-    const unsigned char *desc = descriptors[i].ptr<unsigned char>();
-    
-    for(int j = 0; j < C; ++j, p += 8)
-    {
-      p[0] = (desc[j] & (1 << 7) ? 1.f : 0.f);
-      p[1] = (desc[j] & (1 << 6) ? 1.f : 0.f);
-      p[2] = (desc[j] & (1 << 5) ? 1.f : 0.f);
-      p[3] = (desc[j] & (1 << 4) ? 1.f : 0.f);
-      p[4] = (desc[j] & (1 << 3) ? 1.f : 0.f);
-      p[5] = (desc[j] & (1 << 2) ? 1.f : 0.f);
-      p[6] = (desc[j] & (1 << 1) ? 1.f : 0.f);
-      p[7] = (desc[j] & (1)      ? 1.f : 0.f);
-    }
-  } 
+  mat = ToMat32F(descriptors);
 }
 
 // --------------------------------------------------------------------------
 
 void FORB::toMat32F(const cv::Mat &descriptors, cv::Mat &mat)
 {
+  if(descriptors.empty())
+  {
+    mat.release();
+    return;
+  }
+  if(descriptors.type() != CV_8UC1 || descriptors.cols != L)
+  {
+    throw std::invalid_argument("ORB descriptor matrix must have 32 CV_8U columns.");
+  }
   descriptors.convertTo(mat, CV_32F);
 }
 
@@ -204,7 +99,22 @@ void FORB::toMat32F(const cv::Mat &descriptors, cv::Mat &mat)
 void FORB::toMat8U(const std::vector<TDescriptor> &descriptors,
   cv::Mat &mat)
 {
-  mat.create(descriptors.size(), FORB::L, CV_8U);
+  if(descriptors.empty())
+  {
+    mat.release();
+    return;
+  }
+  if(descriptors.size() >
+    static_cast<std::size_t>((std::numeric_limits<int>::max)()))
+  {
+    throw std::length_error("ORB descriptor count exceeds the OpenCV row range.");
+  }
+  for(const Descriptor &descriptor: descriptors)
+  {
+    Validate(descriptor);
+  }
+
+  mat.create(static_cast<int>(descriptors.size()), FORB::L, CV_8U);
   
   unsigned char *p = mat.ptr<unsigned char>();
   
@@ -225,8 +135,16 @@ FORB::Descriptor FORB::Mean(const std::span<const Descriptor *const> descriptors
     throw std::invalid_argument("Cannot calculate a centroid from an empty ORB descriptor set.");
   }
 
-  std::vector<pDescriptor> legacy_descriptors;
-  legacy_descriptors.reserve(descriptors.size());
+  if(descriptors.size() == 1U)
+  {
+    if(descriptors.front() == nullptr)
+    {
+      throw std::invalid_argument("ORB centroid input contains a null descriptor pointer.");
+    }
+    return Clone(*descriptors.front());
+  }
+
+  std::array<std::size_t, kElementCount> bit_counts{};
   for(const Descriptor *descriptor: descriptors)
   {
     if(descriptor == nullptr)
@@ -234,11 +152,32 @@ FORB::Descriptor FORB::Mean(const std::span<const Descriptor *const> descriptors
       throw std::invalid_argument("ORB centroid input contains a null descriptor pointer.");
     }
     Validate(*descriptor);
-    legacy_descriptors.push_back(descriptor);
+
+    const std::uint8_t *data = descriptor->ptr<std::uint8_t>();
+    for(int byte_index = 0; byte_index < L; ++byte_index)
+    {
+      const std::size_t offset = static_cast<std::size_t>(byte_index) * 8U;
+      if((data[byte_index] & (1U << 7)) != 0U) ++bit_counts[offset];
+      if((data[byte_index] & (1U << 6)) != 0U) ++bit_counts[offset + 1U];
+      if((data[byte_index] & (1U << 5)) != 0U) ++bit_counts[offset + 2U];
+      if((data[byte_index] & (1U << 4)) != 0U) ++bit_counts[offset + 3U];
+      if((data[byte_index] & (1U << 3)) != 0U) ++bit_counts[offset + 4U];
+      if((data[byte_index] & (1U << 2)) != 0U) ++bit_counts[offset + 5U];
+      if((data[byte_index] & (1U << 1)) != 0U) ++bit_counts[offset + 6U];
+      if((data[byte_index] & 1U) != 0U) ++bit_counts[offset + 7U];
+    }
   }
 
-  Descriptor mean;
-  meanValue(legacy_descriptors, mean);
+  Descriptor mean = cv::Mat::zeros(1, L, CV_8U);
+  std::uint8_t *output = mean.ptr<std::uint8_t>();
+  const std::size_t threshold = descriptors.size() / 2U + descriptors.size() % 2U;
+  for(std::size_t bit_index = 0; bit_index < bit_counts.size(); ++bit_index)
+  {
+    if(bit_counts[bit_index] >= threshold)
+    {
+      output[bit_index / 8U] |= static_cast<std::uint8_t>(1U << (7U - bit_index % 8U));
+    }
+  }
   return mean;
 }
 
@@ -248,7 +187,20 @@ double FORB::Distance(const Descriptor &first, const Descriptor &second)
 {
   Validate(first);
   Validate(second);
-  return distance(first, second);
+
+  const std::uint8_t *first_data = first.ptr<std::uint8_t>();
+  const std::uint8_t *second_data = second.ptr<std::uint8_t>();
+  std::size_t hamming_distance = 0U;
+  for(std::size_t offset = 0; offset < static_cast<std::size_t>(L);
+    offset += sizeof(std::uint64_t))
+  {
+    std::uint64_t first_word = 0U;
+    std::uint64_t second_word = 0U;
+    std::memcpy(&first_word, first_data + offset, sizeof(first_word));
+    std::memcpy(&second_word, second_data + offset, sizeof(second_word));
+    hamming_distance += std::popcount(first_word ^ second_word);
+  }
+  return static_cast<double>(hamming_distance);
 }
 
 // --------------------------------------------------------------------------
@@ -308,17 +260,33 @@ cv::Mat FORB::ToMat32F(const std::span<const Descriptor> descriptors)
   {
     return {};
   }
-
-  std::vector<Descriptor> legacy_descriptors;
-  legacy_descriptors.reserve(descriptors.size());
-  for(const Descriptor &descriptor: descriptors)
+  if(descriptors.size() >
+    static_cast<std::size_t>((std::numeric_limits<int>::max)()))
   {
-    Validate(descriptor);
-    legacy_descriptors.push_back(descriptor);
+    throw std::length_error("ORB descriptor count exceeds the OpenCV row range.");
   }
 
-  cv::Mat matrix;
-  toMat32F(legacy_descriptors, matrix);
+  cv::Mat matrix(static_cast<int>(descriptors.size()), L * 8, CV_32F);
+  for(std::size_t row = 0; row < descriptors.size(); ++row)
+  {
+    const Descriptor &descriptor = descriptors[row];
+    Validate(descriptor);
+
+    const std::uint8_t *data = descriptor.ptr<std::uint8_t>();
+    float *output = matrix.ptr<float>(static_cast<int>(row));
+    for(int byte_index = 0; byte_index < L; ++byte_index)
+    {
+      output[0] = (data[byte_index] & (1U << 7)) != 0U ? 1.0F : 0.0F;
+      output[1] = (data[byte_index] & (1U << 6)) != 0U ? 1.0F : 0.0F;
+      output[2] = (data[byte_index] & (1U << 5)) != 0U ? 1.0F : 0.0F;
+      output[3] = (data[byte_index] & (1U << 4)) != 0U ? 1.0F : 0.0F;
+      output[4] = (data[byte_index] & (1U << 3)) != 0U ? 1.0F : 0.0F;
+      output[5] = (data[byte_index] & (1U << 2)) != 0U ? 1.0F : 0.0F;
+      output[6] = (data[byte_index] & (1U << 1)) != 0U ? 1.0F : 0.0F;
+      output[7] = (data[byte_index] & 1U) != 0U ? 1.0F : 0.0F;
+      output += 8;
+    }
+  }
   return matrix;
 }
 
