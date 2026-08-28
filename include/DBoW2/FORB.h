@@ -10,42 +10,40 @@
 #ifndef __D_T_F_ORB__
 #define __D_T_F_ORB__
 
-#include "FClass.h"
-#include "FeatureTraits.h"
+#include <cstddef>
+#include <cstdint>
 #include <opencv2/core.hpp>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
+
+#include "DescriptorPolicy.h"
 
 namespace DBoW2
 {
-    class FORB;
-
-    template <>
-    struct FeatureTraits<FORB>
-    {
-        using Feature = FORB;
-        using Descriptor = cv::Mat;
-        static constexpr EFeatureType feature_type = EFeatureType::ORB;
-        static constexpr const char *name = "ORB";
-        static constexpr bool is_binary = true;
-        static constexpr int descriptor_length = 32;
-    };
-    
-    template <>
-    struct FeatureTypeTraits<EFeatureType::ORB> : FeatureTraits<FORB>
-    {
-        using Type = FORB;
-    };
-
-    /// Functions to manipulate ORB descriptors
-    class FORB : protected FClass
+    /** @brief ORB descriptor policy and compatibility helpers. */
+    class FORB
     {
       public:
-        typedef FeatureTraits<FORB> Traits;
-        /// Feature type
-        typedef FeatureTypeTraits<EFeatureType::ORB>::Type FeatureType;
-        typedef cv::Mat TDescriptor;
-        static constexpr EFeatureType TypeId = Traits::feature_type;
+        using Descriptor = cv::Mat;
+        using Scalar = std::uint8_t;
+        typedef Descriptor TDescriptor;
+
+        static constexpr std::size_t kElementCount = 256;
+        static constexpr EDescriptorStorage kStorage = EDescriptorStorage::packed_binary;
+        static constexpr EDistanceMetric kMetric = EDistanceMetric::hamming;
+        static constexpr EDescriptorNormalization kNormalization = EDescriptorNormalization::none;
+        static constexpr std::string_view kFamily = "orb";
+        static constexpr std::uint32_t kDescriptorContractVersion = 1;
+
+        /**
+         * @brief Return an independently allocated ORB descriptor copy.
+         * @param descriptor Valid 1 x 32 CV_8U descriptor row.
+         * @return Deep copy that does not alias the caller's OpenCV allocation.
+         * @throws std::invalid_argument If the descriptor shape or scalar type is invalid.
+         */
+        [[nodiscard]] static Descriptor Clone(const Descriptor &descriptor);
 
         /// Pointer to a single descriptor
         typedef const TDescriptor *pDescriptor;
@@ -104,6 +102,27 @@ namespace DBoW2
          */
         static void toMat8U(const std::vector<TDescriptor> &descriptors,
                             cv::Mat &mat);
+
+        /** @brief Calculate the historical ORB bit-majority centroid. */
+        [[nodiscard]] static Descriptor Mean(
+            std::span<const Descriptor *const> descriptors);
+
+        /** @brief Calculate Hamming distance between validated ORB descriptors. */
+        [[nodiscard]] static double Distance(const Descriptor &first,
+                                             const Descriptor &second);
+
+        /** @brief Serialize one validated ORB descriptor as 32 byte values. */
+        [[nodiscard]] static std::string Serialize(const Descriptor &descriptor);
+
+        /** @brief Strictly parse exactly 32 ORB byte values without partial output. */
+        [[nodiscard]] static bool Deserialize(std::string_view serialized,
+                                              Descriptor &descriptor);
+
+        /** @brief Convert validated ORB descriptors into 256 zero/one float columns. */
+        [[nodiscard]] static cv::Mat ToMat32F(std::span<const Descriptor> descriptors);
+
+      private:
+        static void Validate(const Descriptor &descriptor);
     };
 
 } // namespace DBoW2

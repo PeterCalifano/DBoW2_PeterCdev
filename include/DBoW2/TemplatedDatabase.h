@@ -15,6 +15,7 @@
 #include <fstream>
 #include <string>
 #include <list>
+#include <span>
 #include <set>
 
 #include "TemplatedVocabulary.h"
@@ -28,13 +29,16 @@ namespace DBoW2 {
 // For query functions
 static int MIN_COMMON_WORDS = 5;
 
-/// @param TDescriptor class of descriptor
-/// @param TFeature class of descriptor functions
-template<class TDescriptor, class TFeature>
-/// Generic Database
+/// @tparam TPolicy Static descriptor policy satisfying DescriptorPolicy.
+template <DescriptorPolicy TPolicy>
+/// @brief Generic image database operating on one descriptor policy.
 class TemplatedDatabase
 {
 public:
+
+  using Policy = TPolicy;
+  using Descriptor = DescriptorType<TPolicy>;
+  using DescriptorList = std::vector<Descriptor>;
 
   /**
    * Creates an empty database without vocabulary
@@ -46,7 +50,7 @@ public:
 
   /**
    * Creates a database with the given vocabulary
-   * @param T class inherited from TemplatedVocabulary<TDescriptor, TFeature>
+   * @tparam T Vocabulary-compatible type copied by the database.
    * @param voc vocabulary
    * @param use_di a direct index is used to store feature indexes
    * @param di_levels levels to go up the vocabulary tree to select the 
@@ -60,7 +64,7 @@ public:
    * Copy constructor. Copies the vocabulary too
    * @param db object to copy
    */
-  TemplatedDatabase(const TemplatedDatabase<TDescriptor, TFeature> &db);
+  TemplatedDatabase(const TemplatedDatabase<TPolicy> &db);
 
   /** 
    * Creates the database from a file
@@ -83,12 +87,12 @@ public:
    * Copies the given database and its vocabulary
    * @param db database to copy
    */
-  TemplatedDatabase<TDescriptor,TFeature>& operator=(
-    const TemplatedDatabase<TDescriptor,TFeature> &db);
+  TemplatedDatabase<TPolicy>& operator=(
+    const TemplatedDatabase<TPolicy> &db);
 
   /**
    * Sets the vocabulary to use and clears the content of the database.
-   * @param T class inherited from TemplatedVocabulary<TDescriptor, TFeature>
+   * @tparam T Vocabulary-compatible type copied by the database.
    * @param voc vocabulary to copy
    */
   template<class T>
@@ -97,7 +101,7 @@ public:
   /**
    * Sets the vocabulary to use and the direct index parameters, and clears
    * the content of the database
-   * @param T class inherited from TemplatedVocabulary<TDescriptor, TFeature>
+   * @tparam T Vocabulary-compatible type copied by the database.
    * @param voc vocabulary to copy
    * @param use_di a direct index is used to store feature indexes
    * @param di_levels levels to go up the vocabulary tree to select the 
@@ -110,7 +114,7 @@ public:
    * Returns a pointer to the vocabulary used
    * @return vocabulary
    */
-  inline const TemplatedVocabulary<TDescriptor,TFeature>* getVocabulary() const;
+  inline const TemplatedVocabulary<TPolicy>* getVocabulary() const;
 
   /** 
    * Allocates some memory for the direct and inverted indexes
@@ -127,8 +131,18 @@ public:
    * @param fvec if given, the vector of nodes and feature indexes is returned
    * @return id of new entry
    */
-  EntryId add(const std::vector<TDescriptor> &features,
+  EntryId add(const std::vector<DescriptorType<TPolicy>> &features,
     BowVector *bowvec = NULL, FeatureVector *fvec = NULL);
+
+  /**
+   * @brief Add a non-owning descriptor batch without copying descriptor storage.
+   * @param features Descriptor span consumed synchronously.
+   * @param bowvec Optional output BoW vector.
+   * @param fvec Optional output direct-index feature vector.
+   * @return Dense database entry identifier.
+   */
+  EntryId add(std::span<const DescriptorType<TPolicy>> features,
+    BowVector *bowvec = nullptr, FeatureVector *fvec = nullptr);
 
   /**
    * Adss an entry to the database and returns its index
@@ -168,10 +182,20 @@ public:
    * @param features query features
    * @param ret (out) query results
    * @param max_results number of results to return. <= 0 means all
-   * @param max_id only entries with id <= max_id are returned in ret. 
+   * @param max_id only entries with id < max_id are returned in ret.
    *   < 0 means all
    */
-  void query(const std::vector<TDescriptor> &features, QueryResults &ret,
+  void query(const std::vector<DescriptorType<TPolicy>> &features, QueryResults &ret,
+    int max_results = 1, int max_id = -1) const;
+
+  /**
+   * @brief Query with a non-owning descriptor batch.
+   * @param features Descriptor span consumed synchronously.
+   * @param ret Output ranked results.
+   * @param max_results Maximum returned results; nonpositive means all.
+   * @param max_id Exclusive upper entry-ID bound; negative means all.
+   */
+  void query(std::span<const DescriptorType<TPolicy>> features, QueryResults &ret,
     int max_results = 1, int max_id = -1) const;
   
   /**
@@ -297,7 +321,7 @@ protected:
 protected:
 
   /// Associated vocabulary
-  TemplatedVocabulary<TDescriptor, TFeature> *m_voc;
+  TemplatedVocabulary<TPolicy> *m_voc;
   
   /// Flag to use direct index
   bool m_use_di;
@@ -319,8 +343,8 @@ protected:
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-TemplatedDatabase<TDescriptor, TFeature>::TemplatedDatabase
+template <DescriptorPolicy TPolicy>
+TemplatedDatabase<TPolicy>::TemplatedDatabase
   (bool use_di, int di_levels)
   : m_voc(NULL), m_use_di(use_di), m_dilevels(di_levels), m_nentries(0)
 {
@@ -328,9 +352,9 @@ TemplatedDatabase<TDescriptor, TFeature>::TemplatedDatabase
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-template<class T>
-TemplatedDatabase<TDescriptor, TFeature>::TemplatedDatabase
+template <DescriptorPolicy TPolicy> // Parameter of the enclosing class template.
+template <class T>                  // Parameter of this member-constructor template.
+TemplatedDatabase<TPolicy>::TemplatedDatabase
   (const T &voc, bool use_di, int di_levels)
   : m_voc(NULL), m_use_di(use_di), m_dilevels(di_levels)
 {
@@ -340,9 +364,9 @@ TemplatedDatabase<TDescriptor, TFeature>::TemplatedDatabase
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-TemplatedDatabase<TDescriptor,TFeature>::TemplatedDatabase
-  (const TemplatedDatabase<TDescriptor,TFeature> &db)
+template <DescriptorPolicy TPolicy>
+TemplatedDatabase<TPolicy>::TemplatedDatabase
+  (const TemplatedDatabase<TPolicy> &db)
   : m_voc(NULL)
 {
   *this = db;
@@ -350,8 +374,8 @@ TemplatedDatabase<TDescriptor,TFeature>::TemplatedDatabase
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-TemplatedDatabase<TDescriptor, TFeature>::TemplatedDatabase
+template <DescriptorPolicy TPolicy>
+TemplatedDatabase<TPolicy>::TemplatedDatabase
   (const std::string &filename)
   : m_voc(NULL)
 {
@@ -360,8 +384,8 @@ TemplatedDatabase<TDescriptor, TFeature>::TemplatedDatabase
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-TemplatedDatabase<TDescriptor, TFeature>::TemplatedDatabase
+template <DescriptorPolicy TPolicy>
+TemplatedDatabase<TPolicy>::TemplatedDatabase
   (const char *filename)
   : m_voc(NULL)
 {
@@ -370,17 +394,17 @@ TemplatedDatabase<TDescriptor, TFeature>::TemplatedDatabase
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-TemplatedDatabase<TDescriptor, TFeature>::~TemplatedDatabase(void)
+template <DescriptorPolicy TPolicy>
+TemplatedDatabase<TPolicy>::~TemplatedDatabase(void)
 {
   delete m_voc;
 }
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-TemplatedDatabase<TDescriptor,TFeature>& TemplatedDatabase<TDescriptor,TFeature>::operator=
-  (const TemplatedDatabase<TDescriptor,TFeature> &db)
+template <DescriptorPolicy TPolicy>
+TemplatedDatabase<TPolicy>& TemplatedDatabase<TPolicy>::operator=
+  (const TemplatedDatabase<TPolicy> &db)
 {
   if(this != &db)
   {
@@ -396,9 +420,19 @@ TemplatedDatabase<TDescriptor,TFeature>& TemplatedDatabase<TDescriptor,TFeature>
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-EntryId TemplatedDatabase<TDescriptor, TFeature>::add(
-  const std::vector<TDescriptor> &features,
+template <DescriptorPolicy TPolicy>
+EntryId TemplatedDatabase<TPolicy>::add(
+  const std::vector<DescriptorType<TPolicy>> &features,
+  BowVector *bowvec, FeatureVector *fvec)
+{
+  return add(std::span<const DescriptorType<TPolicy>>(features), bowvec, fvec);
+}
+
+// --------------------------------------------------------------------------
+
+template <DescriptorPolicy TPolicy>
+EntryId TemplatedDatabase<TPolicy>::add(
+  const std::span<const DescriptorType<TPolicy>> features,
   BowVector *bowvec, FeatureVector *fvec)
 {
   BowVector aux;
@@ -429,8 +463,8 @@ EntryId TemplatedDatabase<TDescriptor, TFeature>::add(
 
 // ---------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-EntryId TemplatedDatabase<TDescriptor, TFeature>::add(const BowVector &v,
+template <DescriptorPolicy TPolicy>
+EntryId TemplatedDatabase<TPolicy>::add(const BowVector &v,
   const FeatureVector &fv)
 {
   EntryId entry_id = m_nentries++;
@@ -465,9 +499,9 @@ EntryId TemplatedDatabase<TDescriptor, TFeature>::add(const BowVector &v,
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
+template <DescriptorPolicy TPolicy>
 template<class T>
-inline void TemplatedDatabase<TDescriptor, TFeature>::setVocabulary
+inline void TemplatedDatabase<TPolicy>::setVocabulary
   (const T& voc)
 {
   delete m_voc;
@@ -477,9 +511,9 @@ inline void TemplatedDatabase<TDescriptor, TFeature>::setVocabulary
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
+template <DescriptorPolicy TPolicy>
 template<class T>
-inline void TemplatedDatabase<TDescriptor, TFeature>::setVocabulary
+inline void TemplatedDatabase<TPolicy>::setVocabulary
   (const T& voc, bool use_di, int di_levels)
 {
   m_use_di = use_di;
@@ -491,17 +525,17 @@ inline void TemplatedDatabase<TDescriptor, TFeature>::setVocabulary
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-inline const TemplatedVocabulary<TDescriptor,TFeature>* 
-TemplatedDatabase<TDescriptor, TFeature>::getVocabulary() const
+template <DescriptorPolicy TPolicy>
+inline const TemplatedVocabulary<TPolicy>*
+TemplatedDatabase<TPolicy>::getVocabulary() const
 {
   return m_voc;
 }
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-inline void TemplatedDatabase<TDescriptor, TFeature>::clear()
+template <DescriptorPolicy TPolicy>
+inline void TemplatedDatabase<TPolicy>::clear()
 {
   // resize vectors
   m_ifile.resize(0);
@@ -512,8 +546,8 @@ inline void TemplatedDatabase<TDescriptor, TFeature>::clear()
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-void TemplatedDatabase<TDescriptor, TFeature>::allocate(int nd, int ni)
+template <DescriptorPolicy TPolicy>
+void TemplatedDatabase<TPolicy>::allocate(int nd, int ni)
 {
   // m_ifile already contains |words| items
   if(ni > 0)
@@ -538,33 +572,43 @@ void TemplatedDatabase<TDescriptor, TFeature>::allocate(int nd, int ni)
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-inline unsigned int TemplatedDatabase<TDescriptor, TFeature>::size() const
+template <DescriptorPolicy TPolicy>
+inline unsigned int TemplatedDatabase<TPolicy>::size() const
 {
   return m_nentries;
 }
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-inline bool TemplatedDatabase<TDescriptor, TFeature>::usingDirectIndex() const
+template <DescriptorPolicy TPolicy>
+inline bool TemplatedDatabase<TPolicy>::usingDirectIndex() const
 {
   return m_use_di;
 }
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-inline int TemplatedDatabase<TDescriptor, TFeature>::getDirectIndexLevels() const
+template <DescriptorPolicy TPolicy>
+inline int TemplatedDatabase<TPolicy>::getDirectIndexLevels() const
 {
   return m_dilevels;
 }
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-void TemplatedDatabase<TDescriptor, TFeature>::query(
-  const std::vector<TDescriptor> &features,
+template <DescriptorPolicy TPolicy>
+void TemplatedDatabase<TPolicy>::query(
+  const std::vector<DescriptorType<TPolicy>> &features,
+  QueryResults &ret, int max_results, int max_id) const
+{
+  query(std::span<const DescriptorType<TPolicy>>(features), ret, max_results, max_id);
+}
+
+// --------------------------------------------------------------------------
+
+template <DescriptorPolicy TPolicy>
+void TemplatedDatabase<TPolicy>::query(
+  const std::span<const DescriptorType<TPolicy>> features,
   QueryResults &ret, int max_results, int max_id) const
 {
   BowVector vec;
@@ -574,8 +618,8 @@ void TemplatedDatabase<TDescriptor, TFeature>::query(
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-void TemplatedDatabase<TDescriptor, TFeature>::query(
+template <DescriptorPolicy TPolicy>
+void TemplatedDatabase<TPolicy>::query(
   const BowVector &vec, 
   QueryResults &ret, int max_results, int max_id) const
 {
@@ -611,8 +655,8 @@ void TemplatedDatabase<TDescriptor, TFeature>::query(
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-void TemplatedDatabase<TDescriptor, TFeature>::queryL1(const BowVector &vec, 
+template <DescriptorPolicy TPolicy>
+void TemplatedDatabase<TPolicy>::queryL1(const BowVector &vec,
   QueryResults &ret, int max_results, int max_id) const
 {
   BowVector::const_iterator vit;
@@ -683,8 +727,8 @@ void TemplatedDatabase<TDescriptor, TFeature>::queryL1(const BowVector &vec,
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-void TemplatedDatabase<TDescriptor, TFeature>::queryL2(const BowVector &vec, 
+template <DescriptorPolicy TPolicy>
+void TemplatedDatabase<TPolicy>::queryL2(const BowVector &vec,
   QueryResults &ret, int max_results, int max_id) const
 {
   BowVector::const_iterator vit;
@@ -771,8 +815,8 @@ void TemplatedDatabase<TDescriptor, TFeature>::queryL2(const BowVector &vec,
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-void TemplatedDatabase<TDescriptor, TFeature>::queryChiSquare(const BowVector &vec, 
+template <DescriptorPolicy TPolicy>
+void TemplatedDatabase<TPolicy>::queryChiSquare(const BowVector &vec,
   QueryResults &ret, int max_results, int max_id) const
 {
   BowVector::const_iterator vit;
@@ -882,8 +926,8 @@ void TemplatedDatabase<TDescriptor, TFeature>::queryChiSquare(const BowVector &v
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-void TemplatedDatabase<TDescriptor, TFeature>::queryKL(const BowVector &vec, 
+template <DescriptorPolicy TPolicy>
+void TemplatedDatabase<TPolicy>::queryKL(const BowVector &vec,
   QueryResults &ret, int max_results, int max_id) const
 {
   BowVector::const_iterator vit;
@@ -973,8 +1017,8 @@ void TemplatedDatabase<TDescriptor, TFeature>::queryKL(const BowVector &vec,
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-void TemplatedDatabase<TDescriptor, TFeature>::queryBhattacharyya(
+template <DescriptorPolicy TPolicy>
+void TemplatedDatabase<TPolicy>::queryBhattacharyya(
   const BowVector &vec, QueryResults &ret, int max_results, int max_id) const
 {
   BowVector::const_iterator vit;
@@ -1046,8 +1090,8 @@ void TemplatedDatabase<TDescriptor, TFeature>::queryBhattacharyya(
 
 // ---------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-void TemplatedDatabase<TDescriptor, TFeature>::queryDotProduct(
+template <DescriptorPolicy TPolicy>
+void TemplatedDatabase<TPolicy>::queryDotProduct(
   const BowVector &vec, QueryResults &ret, int max_results, int max_id) const
 {
   BowVector::const_iterator vit;
@@ -1114,8 +1158,8 @@ void TemplatedDatabase<TDescriptor, TFeature>::queryDotProduct(
 
 // ---------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-const FeatureVector& TemplatedDatabase<TDescriptor, TFeature>::retrieveFeatures
+template <DescriptorPolicy TPolicy>
+const FeatureVector& TemplatedDatabase<TPolicy>::retrieveFeatures
   (EntryId id) const
 {
   assert(id < size());
@@ -1124,8 +1168,8 @@ const FeatureVector& TemplatedDatabase<TDescriptor, TFeature>::retrieveFeatures
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-void TemplatedDatabase<TDescriptor, TFeature>::save(const std::string &filename) const
+template <DescriptorPolicy TPolicy>
+void TemplatedDatabase<TPolicy>::save(const std::string &filename) const
 {
   cv::FileStorage fs(filename.c_str(), cv::FileStorage::WRITE);
   if(!fs.isOpened()) throw std::string("Could not open file ") + filename;
@@ -1135,8 +1179,8 @@ void TemplatedDatabase<TDescriptor, TFeature>::save(const std::string &filename)
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-void TemplatedDatabase<TDescriptor, TFeature>::save(cv::FileStorage &fs,
+template <DescriptorPolicy TPolicy>
+void TemplatedDatabase<TPolicy>::save(cv::FileStorage &fs,
   const std::string &name) const
 {
   // Format YAML:
@@ -1232,8 +1276,8 @@ void TemplatedDatabase<TDescriptor, TFeature>::save(cv::FileStorage &fs,
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-void TemplatedDatabase<TDescriptor, TFeature>::load(const std::string &filename)
+template <DescriptorPolicy TPolicy>
+void TemplatedDatabase<TPolicy>::load(const std::string &filename)
 {
   cv::FileStorage fs(filename.c_str(), cv::FileStorage::READ);
   if(!fs.isOpened()) throw std::string("Could not open file ") + filename;
@@ -1243,13 +1287,13 @@ void TemplatedDatabase<TDescriptor, TFeature>::load(const std::string &filename)
 
 // --------------------------------------------------------------------------
 
-template<class TDescriptor, class TFeature>
-void TemplatedDatabase<TDescriptor, TFeature>::load(const cv::FileStorage &fs,
+template <DescriptorPolicy TPolicy>
+void TemplatedDatabase<TPolicy>::load(const cv::FileStorage &fs,
   const std::string &name)
 { 
   // load voc first
   // subclasses must instantiate m_voc before calling this ::load
-  if(!m_voc) m_voc = new TemplatedVocabulary<TDescriptor, TFeature>;
+  if(!m_voc) m_voc = new TemplatedVocabulary<TPolicy>;
   
   m_voc->load(fs);
 
@@ -1326,9 +1370,9 @@ void TemplatedDatabase<TDescriptor, TFeature>::load(const cv::FileStorage &fs,
  * @param os stream to write to
  * @param db
  */
-template<class TDescriptor, class TFeature>
+template <DescriptorPolicy TPolicy>
 std::ostream& operator<<(std::ostream &os, 
-  const TemplatedDatabase<TDescriptor,TFeature> &db)
+  const TemplatedDatabase<TPolicy> &db)
 {
   os << "Database: Entries = " << db.size() << ", "
     "Using direct index = " << (db.usingDirectIndex() ? "yes" : "no");

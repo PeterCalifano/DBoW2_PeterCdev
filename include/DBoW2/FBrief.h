@@ -11,46 +11,28 @@
 #define __D_T_F_BRIEF__
 
 #include <bitset>
+#include <cstdint>
 #include <opencv2/core.hpp>
 #include <string>
+#include <string_view>
 #include <vector>
 
-#include "FClass.h"
-#include "FeatureTraits.h"
+#include "DescriptorPolicy.h"
 
 namespace DBoW2
 {
 
-    class FBrief;
-
-    template <>
-    struct FeatureTraits<FBrief>
-    {
-        using Feature = FBrief;
-        using Descriptor = std::bitset<256>;
-        static constexpr EFeatureType feature_type = EFeatureType::BRIEF;
-        static constexpr const char *name = "BRIEF";
-        static constexpr bool is_binary = true;
-        static constexpr int descriptor_length = 256;
-    };
-
-    template <>
-    struct FeatureTypeTraits<EFeatureType::BRIEF>
-        : FeatureTraits<FBrief>
-    {
-        using Type = FBrief;
-    };
-
-    /// Functions to manipulate BRIEF descriptors
-    class FBrief : protected FClass
+    /** @brief BRIEF descriptor policy and compatibility helpers. */
+    class FBrief : public BitsetDescriptorPolicy<256>
     {
       public:
-        typedef FeatureTraits<FBrief> Traits;
-        typedef FeatureTypeTraits<EFeatureType::BRIEF>::Type FeatureType;
-        static constexpr EFeatureType TypeId = Traits::feature_type;
-        
+        using BasePolicy = BitsetDescriptorPolicy<256>;
+        using Descriptor = BasePolicy::Descriptor;
+        using Scalar = BasePolicy::Scalar;
+        static constexpr std::string_view kFamily = "brief";
+        static constexpr std::uint32_t kDescriptorContractVersion = 1;
         static const int L = 256; // Descriptor length (in bits)
-        typedef std::bitset<L> TDescriptor;
+        typedef Descriptor TDescriptor;
         typedef const TDescriptor *pDescriptor;
 
         /**

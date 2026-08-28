@@ -14,7 +14,6 @@
 #include <iostream>
 #include <map>
 #include <vector>
-#include "FeatureTraits.h"
 
 namespace DBoW2
 {

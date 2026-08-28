@@ -12,46 +12,47 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <limits>
 #include <numeric>
 #include <opencv2/core.hpp>
+#include <stdexcept>
 #include <string>
-#include <type_traits>
 #include <vector>
 
 #include "BowVector.h"
-#include "FeatureTraits.h"
+#include "DescriptorPolicy.h"
 #include "FeatureVector.h"
 #include "ScoringObject.h"
 
 namespace DBoW2
 {
 
-    /// @param TDescriptor class of descriptor
-    /// @param TFeature class of descriptor functions
-    template <class TDescriptor, class TFeature>
-    /// Generic Vocabulary
+    /// @tparam TPolicy Static descriptor policy satisfying DescriptorPolicy.
+    template <DescriptorPolicy TPolicy>
+    /// @brief Generic visual vocabulary operating on one descriptor policy.
     class TemplatedVocabulary
     {
       public:
-        typedef typename TFeature::FeatureType FeatureType;
-        typedef FeatureTraits<TFeature> Traits;
-        typedef typename Traits::Descriptor FeatureDescriptor;
+        using Policy = TPolicy;
+        using Descriptor = DescriptorType<TPolicy>;
+        using DescriptorList = std::vector<Descriptor>;
+        using TrainingFeatures = std::vector<DescriptorList>;
 
-        static constexpr EFeatureType kFeatureType = Traits::feature_type;
-        static constexpr EFeatureType TypeId = kFeatureType;
-        static constexpr const char *kFeatureName = Traits::name;
-        static constexpr bool kIsBinary = Traits::is_binary;
-        static constexpr int kDescriptorLength = Traits::descriptor_length;
+        static constexpr bool kIsBinary =
+            TPolicy::kStorage == EDescriptorStorage::packed_binary;
+        static constexpr std::size_t kDescriptorLength = TPolicy::kElementCount;
 
-        static constexpr EFeatureType getFeatureType() { return kFeatureType; }
-        static constexpr const char *getFeatureName() { return kFeatureName; }
-        static constexpr bool isBinary() { return kIsBinary; }
-        static constexpr int getDescriptorLength() { return kDescriptorLength; }
+        /** @brief Return whether the policy uses packed binary descriptors. */
+        [[nodiscard]] static constexpr bool isBinary() { return kIsBinary; }
 
-        static_assert(std::is_same<TDescriptor, FeatureDescriptor>::value,
-                      "TemplatedVocabulary descriptor type must match FeatureTraits<TFeature>::Descriptor");
+        /** @brief Return the number of logical elements in each descriptor. */
+        [[nodiscard]] static constexpr std::size_t getDescriptorLength()
+        {
+            return kDescriptorLength;
+        }
 
       public:
         /**
@@ -80,7 +81,7 @@ namespace DBoW2
          * Copy constructor
          * @param voc
          */
-        TemplatedVocabulary(const TemplatedVocabulary<TDescriptor, TFeature> &voc);
+        TemplatedVocabulary(const TemplatedVocabulary<TPolicy> &voc);
 
         /**
          * Destructor
@@ -93,15 +94,15 @@ namespace DBoW2
          * @param voc
          * @return reference to this vocabulary
          */
-        TemplatedVocabulary<TDescriptor, TFeature> &operator=(
-            const TemplatedVocabulary<TDescriptor, TFeature> &voc);
+        TemplatedVocabulary<TPolicy> &operator=(
+            const TemplatedVocabulary<TPolicy> &voc);
 
         /**
          * Creates a vocabulary from the training features with the already
          * defined parameters
          * @param training_features
          */
-        virtual void create(const std::vector<std::vector<TDescriptor>> &training_features);
+        virtual void create(const std::vector<std::vector<DescriptorType<TPolicy>>> &training_features);
 
         /**
          * Creates a vocabulary from the training features, setting the branching
@@ -110,7 +111,7 @@ namespace DBoW2
          * @param k branching factor
          * @param L depth levels
          */
-        virtual void create(const std::vector<std::vector<TDescriptor>> &training_features,
+        virtual void create(const std::vector<std::vector<DescriptorType<TPolicy>>> &training_features,
                             int k, int L);
 
         /**
@@ -118,7 +119,7 @@ namespace DBoW2
          * factor nad the depth levels of the tree, and the weighting and scoring
          * schemes
          */
-        virtual void create(const std::vector<std::vector<TDescriptor>> &training_features,
+        virtual void create(const std::vector<std::vector<DescriptorType<TPolicy>>> &training_features,
                             int k, int L, WeightingType weighting, ScoringType scoring);
 
         /**
@@ -138,8 +139,15 @@ namespace DBoW2
          * @param features
          * @param v (out) bow vector of weighted words
          */
-        virtual void transform(const std::vector<TDescriptor> &features, BowVector &v)
+        virtual void transform(const std::vector<DescriptorType<TPolicy>> &features, BowVector &v)
             const;
+
+        /**
+         * @brief Transform a non-owning descriptor batch into a BoW vector.
+         * @param features Descriptor span consumed synchronously.
+         * @param v Output normalized word vector.
+         */
+        void transform(std::span<const DescriptorType<TPolicy>> features, BowVector &v) const;
 
         /**
          * Transform a set of descriptors into a bow vector and a feature vector
@@ -148,15 +156,25 @@ namespace DBoW2
          * @param fv (out) feature vector of nodes and feature indexes
          * @param levelsup levels to go up the vocabulary tree to get the node index
          */
-        virtual void transform(const std::vector<TDescriptor> &features,
+        virtual void transform(const std::vector<DescriptorType<TPolicy>> &features,
                                BowVector &v, FeatureVector &fv, int levelsup) const;
+
+        /**
+         * @brief Transform a non-owning descriptor batch into BoW and direct-index vectors.
+         * @param features Descriptor span consumed synchronously.
+         * @param v Output normalized word vector.
+         * @param fv Output node-to-feature-index map.
+         * @param levelsup Levels above each word used for direct-index nodes.
+         */
+        void transform(std::span<const DescriptorType<TPolicy>> features,
+                       BowVector &v, FeatureVector &fv, int levelsup) const;
 
         /**
          * Transforms a single feature into a word (without weight)
          * @param feature
          * @return word id
          */
-        virtual WordId transform(const TDescriptor &feature) const;
+        virtual WordId transform(const DescriptorType<TPolicy> &feature) const;
 
         /**
          * Returns the score of two vectors
@@ -207,7 +225,7 @@ namespace DBoW2
          * @param wid word id
          * @return descriptor
          */
-        virtual inline TDescriptor getWord(WordId wid) const;
+        virtual inline DescriptorType<TPolicy> getWord(WordId wid) const;
 
         /**
          * Returns the weight of a word
@@ -254,16 +272,18 @@ namespace DBoW2
 
         /**
          * Saves the vocabulary to a file storage structure
-         * @param fn node in file storage
+         * @param fs Writable OpenCV file storage.
+         * @param name Top-level node name used for the vocabulary.
          */
         virtual void save(cv::FileStorage &fs,
                           const std::string &name = "vocabulary") const;
 
         /**
          * Loads the vocabulary from a file storage node
-         * @param fn first node
-         * @param subname name of the child node of fn where the tree is stored.
-         *   If not given, the fn node is used instead
+         * @param fs Readable OpenCV file storage.
+         * @param name Top-level node name containing the vocabulary.
+         * @throws std::runtime_error If parameters, tree topology, descriptors, or words are
+         *         missing, malformed, or mutually inconsistent.
          */
         virtual void load(const cv::FileStorage &fs,
                           const std::string &name = "vocabulary");
@@ -284,7 +304,7 @@ namespace DBoW2
 
       protected:
         /// Pointer to descriptor
-        typedef const TDescriptor *pDescriptor;
+        typedef const DescriptorType<TPolicy> *pDescriptor;
 
         /// Tree node
         struct Node
@@ -298,7 +318,7 @@ namespace DBoW2
             /// Parent node (undefined in case of root)
             NodeId parent;
             /// Node descriptor
-            TDescriptor descriptor;
+            DescriptorType<TPolicy> descriptor;
 
             /// Word id if the node is a word
             WordId word_id;
@@ -306,13 +326,16 @@ namespace DBoW2
             /**
              * Empty constructor
              */
-            Node() : id(0), weight(0), parent(0), word_id(0) {}
+            Node() : id(0), weight(0), parent(0), descriptor(), word_id(0) {}
 
             /**
              * Constructor
              * @param _id node id
              */
-            Node(NodeId _id) : id(_id), weight(0), parent(0), word_id(0) {}
+            Node(NodeId _id)
+                : id(_id), weight(0), parent(0), descriptor(), word_id(0)
+            {
+            }
 
             /**
              * Returns whether the node is a leaf node
@@ -333,7 +356,7 @@ namespace DBoW2
          * @param features (out) pointers to the training features
          */
         void getFeatures(
-            const std::vector<std::vector<TDescriptor>> &training_features,
+            const std::vector<std::vector<DescriptorType<TPolicy>>> &training_features,
             std::vector<pDescriptor> &features) const;
 
         /**
@@ -344,7 +367,7 @@ namespace DBoW2
          * @param nid (out) if given, id of the node "levelsup" levels up
          * @param levelsup
          */
-        virtual void transform(const TDescriptor &feature,
+        virtual void transform(const DescriptorType<TPolicy> &feature,
                                WordId &id, WordValue &weight, NodeId *nid = NULL, int levelsup = 0) const;
 
         /**
@@ -352,7 +375,7 @@ namespace DBoW2
          * @param feature
          * @param id (out) word id
          */
-        virtual void transform(const TDescriptor &feature, WordId &id) const;
+        virtual void transform(const DescriptorType<TPolicy> &feature, WordId &id) const;
 
         /**
          * Creates a level in the tree, under the parent, by running kmeans with
@@ -370,7 +393,7 @@ namespace DBoW2
          *   overriden by inherited classes.
          */
         virtual void initiateClusters(const std::vector<pDescriptor> &descriptors,
-                                      std::vector<TDescriptor> &clusters) const;
+                                      std::vector<DescriptorType<TPolicy>> &clusters) const;
 
         /**
          * Creates k clusters from the given descriptor sets by running the
@@ -379,7 +402,7 @@ namespace DBoW2
          * @param clusters resulting clusters
          */
         void initiateClustersKMpp(const std::vector<pDescriptor> &descriptors,
-                                  std::vector<TDescriptor> &clusters) const;
+                                  std::vector<DescriptorType<TPolicy>> &clusters) const;
 
         /**
          * Create the words of the vocabulary once the tree has been built
@@ -392,7 +415,7 @@ namespace DBoW2
          * created (by calling HKmeansStep and createWords)
          * @param features
          */
-        void setNodeWeights(const std::vector<std::vector<TDescriptor>> &features);
+        void setNodeWeights(const std::vector<std::vector<DescriptorType<TPolicy>>> &features);
 
         /**
          * Returns a random number in the range [min..max]
@@ -445,8 +468,8 @@ namespace DBoW2
     // TEMPLATE IMPLEMENTATION
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    TemplatedVocabulary<TDescriptor, TFeature>::TemplatedVocabulary(int k, int L, WeightingType weighting, ScoringType scoring)
+    template <DescriptorPolicy TPolicy>
+    TemplatedVocabulary<TPolicy>::TemplatedVocabulary(int k, int L, WeightingType weighting, ScoringType scoring)
         : m_k(k), m_L(L), m_weighting(weighting), m_scoring(scoring),
           m_scoring_object(NULL)
     {
@@ -455,24 +478,24 @@ namespace DBoW2
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    TemplatedVocabulary<TDescriptor, TFeature>::TemplatedVocabulary(const std::string &filename) : m_scoring_object(NULL)
+    template <DescriptorPolicy TPolicy>
+    TemplatedVocabulary<TPolicy>::TemplatedVocabulary(const std::string &filename) : m_scoring_object(NULL)
     {
         load(filename);
     }
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    TemplatedVocabulary<TDescriptor, TFeature>::TemplatedVocabulary(const char *filename) : m_scoring_object(NULL)
+    template <DescriptorPolicy TPolicy>
+    TemplatedVocabulary<TPolicy>::TemplatedVocabulary(const char *filename) : m_scoring_object(NULL)
     {
         load(filename);
     }
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    void TemplatedVocabulary<TDescriptor, TFeature>::createScoringObject()
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::createScoringObject()
     {
         delete m_scoring_object;
         m_scoring_object = NULL;
@@ -507,8 +530,8 @@ namespace DBoW2
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    void TemplatedVocabulary<TDescriptor, TFeature>::setScoringType(ScoringType type)
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::setScoringType(ScoringType type)
     {
         m_scoring = type;
         createScoringObject();
@@ -516,17 +539,17 @@ namespace DBoW2
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    void TemplatedVocabulary<TDescriptor, TFeature>::setWeightingType(WeightingType type)
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::setWeightingType(WeightingType type)
     {
         this->m_weighting = type;
     }
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    TemplatedVocabulary<TDescriptor, TFeature>::TemplatedVocabulary(
-        const TemplatedVocabulary<TDescriptor, TFeature> &voc)
+    template <DescriptorPolicy TPolicy>
+    TemplatedVocabulary<TPolicy>::TemplatedVocabulary(
+        const TemplatedVocabulary<TPolicy> &voc)
         : m_scoring_object(NULL)
     {
         *this = voc;
@@ -534,17 +557,17 @@ namespace DBoW2
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    TemplatedVocabulary<TDescriptor, TFeature>::~TemplatedVocabulary()
+    template <DescriptorPolicy TPolicy>
+    TemplatedVocabulary<TPolicy>::~TemplatedVocabulary()
     {
         delete m_scoring_object;
     }
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    TemplatedVocabulary<TDescriptor, TFeature> &
-    TemplatedVocabulary<TDescriptor, TFeature>::operator=(const TemplatedVocabulary<TDescriptor, TFeature> &voc)
+    template <DescriptorPolicy TPolicy>
+    TemplatedVocabulary<TPolicy> &
+    TemplatedVocabulary<TPolicy>::operator=(const TemplatedVocabulary<TPolicy> &voc)
     {
         this->m_k = voc.m_k;
         this->m_L = voc.m_L;
@@ -557,6 +580,11 @@ namespace DBoW2
         this->m_words.clear();
 
         this->m_nodes = voc.m_nodes;
+        for (std::size_t index = 1; index < this->m_nodes.size(); ++index)
+        {
+            this->m_nodes[index].descriptor =
+                TPolicy::Clone(voc.m_nodes[index].descriptor);
+        }
         this->createWords();
 
         return *this;
@@ -564,9 +592,9 @@ namespace DBoW2
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    void TemplatedVocabulary<TDescriptor, TFeature>::create(
-        const std::vector<std::vector<TDescriptor>> &training_features)
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::create(
+        const std::vector<std::vector<DescriptorType<TPolicy>>> &training_features)
     {
         m_nodes.clear();
         m_words.clear();
@@ -595,9 +623,9 @@ namespace DBoW2
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    void TemplatedVocabulary<TDescriptor, TFeature>::create(
-        const std::vector<std::vector<TDescriptor>> &training_features,
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::create(
+        const std::vector<std::vector<DescriptorType<TPolicy>>> &training_features,
         int k, int L)
     {
         m_k = k;
@@ -608,9 +636,9 @@ namespace DBoW2
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    void TemplatedVocabulary<TDescriptor, TFeature>::create(
-        const std::vector<std::vector<TDescriptor>> &training_features,
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::create(
+        const std::vector<std::vector<DescriptorType<TPolicy>>> &training_features,
         int k, int L, WeightingType weighting, ScoringType scoring)
     {
         m_k = k;
@@ -624,15 +652,15 @@ namespace DBoW2
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    void TemplatedVocabulary<TDescriptor, TFeature>::getFeatures(
-        const std::vector<std::vector<TDescriptor>> &training_features,
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::getFeatures(
+        const std::vector<std::vector<DescriptorType<TPolicy>>> &training_features,
         std::vector<pDescriptor> &features) const
     {
         features.resize(0);
 
-        typename std::vector<std::vector<TDescriptor>>::const_iterator vvit;
-        typename std::vector<TDescriptor>::const_iterator vit;
+        typename std::vector<std::vector<DescriptorType<TPolicy>>>::const_iterator vvit;
+        typename std::vector<DescriptorType<TPolicy>>::const_iterator vit;
         for (vvit = training_features.begin(); vvit != training_features.end(); ++vvit)
         {
             features.reserve(features.size() + vvit->size());
@@ -645,15 +673,17 @@ namespace DBoW2
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    void TemplatedVocabulary<TDescriptor, TFeature>::HKmeansStep(NodeId parent_id,
-                                                                 const std::vector<pDescriptor> &descriptors, int current_level)
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::HKmeansStep(
+        NodeId parent_id,
+        const std::vector<pDescriptor> &descriptors,
+        int current_level)
     {
         if (descriptors.empty())
             return;
 
         // features associated to each cluster
-        std::vector<TDescriptor> clusters;
+        std::vector<DescriptorType<TPolicy>> clusters;
         std::vector<std::vector<unsigned int>> groups; // groups[i] = [j1, j2, ...]
                                                        // j1, j2, ... indices of descriptors associated to cluster i
 
@@ -673,7 +703,7 @@ namespace DBoW2
             for (unsigned int i = 0; i < descriptors.size(); i++)
             {
                 groups[i].push_back(i);
-                clusters.push_back(*descriptors[i]);
+                clusters.push_back(TPolicy::Clone(*descriptors[i]));
             }
         }
         else
@@ -720,7 +750,7 @@ namespace DBoW2
                             cluster_descriptors.push_back(descriptors[*vit]);
                         }
 
-                        TFeature::meanValue(cluster_descriptors, clusters[c]);
+                        clusters[c] = TPolicy::Mean(cluster_descriptors);
                     }
 
                 } // if(!first_time)
@@ -738,12 +768,12 @@ namespace DBoW2
                 // unsigned int d = 0;
                 for (fit = descriptors.begin(); fit != descriptors.end(); ++fit) //, ++d)
                 {
-                    double best_dist = TFeature::distance(*(*fit), clusters[0]);
+                    double best_dist = TPolicy::Distance(*(*fit), clusters[0]);
                     unsigned int icluster = 0;
 
                     for (unsigned int c = 1; c < clusters.size(); ++c)
                     {
-                        double dist = TFeature::distance(*(*fit), clusters[c]);
+                        double dist = TPolicy::Distance(*(*fit), clusters[c]);
                         if (dist < best_dist)
                         {
                             best_dist = dist;
@@ -795,7 +825,7 @@ namespace DBoW2
         {
             NodeId id = m_nodes.size();
             m_nodes.push_back(Node(id));
-            m_nodes.back().descriptor = clusters[i];
+            m_nodes.back().descriptor = TPolicy::Clone(clusters[i]);
             m_nodes.back().parent = parent_id;
             m_nodes[parent_id].children.push_back(id);
         }
@@ -828,19 +858,20 @@ namespace DBoW2
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    void TemplatedVocabulary<TDescriptor, TFeature>::initiateClusters(const std::vector<pDescriptor> &descriptors,
-                                                                      std::vector<TDescriptor> &clusters) const
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::initiateClusters(
+        const std::vector<pDescriptor> &descriptors,
+        std::vector<DescriptorType<TPolicy>> &clusters) const
     {
         initiateClustersKMpp(descriptors, clusters);
     }
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    void TemplatedVocabulary<TDescriptor, TFeature>::initiateClustersKMpp(
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::initiateClustersKMpp(
         const std::vector<pDescriptor> &pfeatures,
-        std::vector<TDescriptor> &clusters) const
+        std::vector<DescriptorType<TPolicy>> &clusters) const
     {
         // Implements kmeans++ seeding algorithm
         // Algorithm:
@@ -862,7 +893,7 @@ namespace DBoW2
         int ifeature = RandomInt(0, pfeatures.size() - 1);
 
         // create first cluster
-        clusters.push_back(*pfeatures[ifeature]);
+        clusters.push_back(TPolicy::Clone(*pfeatures[ifeature]));
 
         // compute the initial distances
         typename std::vector<pDescriptor>::const_iterator fit;
@@ -870,7 +901,7 @@ namespace DBoW2
         dit = min_dists.begin();
         for (fit = pfeatures.begin(); fit != pfeatures.end(); ++fit, ++dit)
         {
-            *dit = TFeature::distance(*(*fit), clusters.back());
+            *dit = TPolicy::Distance(*(*fit), clusters.back());
         }
 
         while ((int)clusters.size() < m_k)
@@ -881,7 +912,7 @@ namespace DBoW2
             {
                 if (*dit > 0)
                 {
-                    double dist = TFeature::distance(*(*fit), clusters.back());
+                    double dist = TPolicy::Distance(*(*fit), clusters.back());
                     if (dist < *dit)
                         *dit = dist;
                 }
@@ -911,7 +942,7 @@ namespace DBoW2
                 else
                     ifeature = dit - min_dists.begin();
 
-                clusters.push_back(*pfeatures[ifeature]);
+                clusters.push_back(TPolicy::Clone(*pfeatures[ifeature]));
 
             } // if dist_sum > 0
             else
@@ -922,8 +953,8 @@ namespace DBoW2
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    void TemplatedVocabulary<TDescriptor, TFeature>::createWords()
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::createWords()
     {
         m_words.resize(0);
 
@@ -947,8 +978,9 @@ namespace DBoW2
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    void TemplatedVocabulary<TDescriptor, TFeature>::setNodeWeights(const std::vector<std::vector<TDescriptor>> &training_features)
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::setNodeWeights(
+        const std::vector<std::vector<DescriptorType<TPolicy>>> &training_features)
     {
         const unsigned int NWords = m_words.size();
         const unsigned int NDocs = training_features.size();
@@ -969,8 +1001,8 @@ namespace DBoW2
             std::vector<unsigned int> Ni(NWords, 0);
             std::vector<bool> counted(NWords, false);
 
-            typename std::vector<std::vector<TDescriptor>>::const_iterator mit;
-            typename std::vector<TDescriptor>::const_iterator fit;
+            typename std::vector<std::vector<DescriptorType<TPolicy>>>::const_iterator mit;
+            typename std::vector<DescriptorType<TPolicy>>::const_iterator fit;
 
             for (mit = training_features.begin(); mit != training_features.end(); ++mit)
             {
@@ -1002,24 +1034,24 @@ namespace DBoW2
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    inline unsigned int TemplatedVocabulary<TDescriptor, TFeature>::size() const
+    template <DescriptorPolicy TPolicy>
+    inline unsigned int TemplatedVocabulary<TPolicy>::size() const
     {
         return m_words.size();
     }
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    inline bool TemplatedVocabulary<TDescriptor, TFeature>::empty() const
+    template <DescriptorPolicy TPolicy>
+    inline bool TemplatedVocabulary<TPolicy>::empty() const
     {
         return m_words.empty();
     }
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    float TemplatedVocabulary<TDescriptor, TFeature>::getEffectiveLevels() const
+    template <DescriptorPolicy TPolicy>
+    float TemplatedVocabulary<TPolicy>::getEffectiveLevels() const
     {
         long sum = 0;
         typename std::vector<Node *>::const_iterator wit;
@@ -1036,24 +1068,24 @@ namespace DBoW2
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    TDescriptor TemplatedVocabulary<TDescriptor, TFeature>::getWord(WordId wid) const
+    template <DescriptorPolicy TPolicy>
+    DescriptorType<TPolicy> TemplatedVocabulary<TPolicy>::getWord(WordId wid) const
     {
         return m_words[wid]->descriptor;
     }
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    WordValue TemplatedVocabulary<TDescriptor, TFeature>::getWordWeight(WordId wid) const
+    template <DescriptorPolicy TPolicy>
+    WordValue TemplatedVocabulary<TPolicy>::getWordWeight(WordId wid) const
     {
         return m_words[wid]->weight;
     }
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    WordId TemplatedVocabulary<TDescriptor, TFeature>::transform(const TDescriptor &feature) const
+    template <DescriptorPolicy TPolicy>
+    WordId TemplatedVocabulary<TPolicy>::transform(const DescriptorType<TPolicy> &feature) const
     {
         if (empty())
         {
@@ -1067,9 +1099,18 @@ namespace DBoW2
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    void TemplatedVocabulary<TDescriptor, TFeature>::transform(
-        const std::vector<TDescriptor> &features, BowVector &v) const
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::transform(
+        const std::vector<DescriptorType<TPolicy>> &features, BowVector &v) const
+    {
+        transform(std::span<const DescriptorType<TPolicy>>(features), v);
+    }
+
+    // --------------------------------------------------------------------------
+
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::transform(
+        const std::span<const DescriptorType<TPolicy>> features, BowVector &v) const
     {
         v.clear();
 
@@ -1082,17 +1123,15 @@ namespace DBoW2
         LNorm norm;
         bool must = m_scoring_object->mustNormalize(norm);
 
-        typename std::vector<TDescriptor>::const_iterator fit;
-
         if (m_weighting == TF || m_weighting == TF_IDF)
         {
-            for (fit = features.begin(); fit < features.end(); ++fit)
+            for (const DescriptorType<TPolicy> &feature : features)
             {
                 WordId id;
                 WordValue w;
                 // w is the idf value if TF_IDF, 1 if TF
 
-                transform(*fit, id, w);
+                transform(feature, id, w);
 
                 // not stopped
                 if (w > 0)
@@ -1109,13 +1148,13 @@ namespace DBoW2
         }
         else // IDF || BINARY
         {
-            for (fit = features.begin(); fit < features.end(); ++fit)
+            for (const DescriptorType<TPolicy> &feature : features)
             {
                 WordId id;
                 WordValue w;
                 // w is idf if IDF, or 1 if BINARY
 
-                transform(*fit, id, w);
+                transform(feature, id, w);
 
                 // not stopped
                 if (w > 0)
@@ -1130,9 +1169,19 @@ namespace DBoW2
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    void TemplatedVocabulary<TDescriptor, TFeature>::transform(
-        const std::vector<TDescriptor> &features,
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::transform(
+        const std::vector<DescriptorType<TPolicy>> &features,
+        BowVector &v, FeatureVector &fv, int levelsup) const
+    {
+        transform(std::span<const DescriptorType<TPolicy>>(features), v, fv, levelsup);
+    }
+
+    // --------------------------------------------------------------------------
+
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::transform(
+        const std::span<const DescriptorType<TPolicy>> features,
         BowVector &v, FeatureVector &fv, int levelsup) const
     {
         v.clear();
@@ -1147,25 +1196,24 @@ namespace DBoW2
         LNorm norm;
         bool must = m_scoring_object->mustNormalize(norm);
 
-        typename std::vector<TDescriptor>::const_iterator fit;
-
         if (m_weighting == TF || m_weighting == TF_IDF)
         {
             unsigned int i_feature = 0;
-            for (fit = features.begin(); fit < features.end(); ++fit, ++i_feature)
+            for (const DescriptorType<TPolicy> &feature : features)
             {
                 WordId id;
                 NodeId nid;
                 WordValue w;
                 // w is the idf value if TF_IDF, 1 if TF
 
-                transform(*fit, id, w, &nid, levelsup);
+                transform(feature, id, w, &nid, levelsup);
 
                 if (w > 0) // not stopped
                 {
                     v.addWeight(id, w);
                     fv.addFeature(nid, i_feature);
                 }
+                ++i_feature;
             }
 
             if (!v.empty() && !must)
@@ -1179,20 +1227,21 @@ namespace DBoW2
         else // IDF || BINARY
         {
             unsigned int i_feature = 0;
-            for (fit = features.begin(); fit < features.end(); ++fit, ++i_feature)
+            for (const DescriptorType<TPolicy> &feature : features)
             {
                 WordId id;
                 NodeId nid;
                 WordValue w;
                 // w is idf if IDF, or 1 if BINARY
 
-                transform(*fit, id, w, &nid, levelsup);
+                transform(feature, id, w, &nid, levelsup);
 
                 if (w > 0) // not stopped
                 {
                     v.addIfNotExist(id, w);
                     fv.addFeature(nid, i_feature);
                 }
+                ++i_feature;
             }
         } // if m_weighting == ...
 
@@ -1202,16 +1251,16 @@ namespace DBoW2
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    inline double TemplatedVocabulary<TDescriptor, TFeature>::score(const BowVector &v1, const BowVector &v2) const
+    template <DescriptorPolicy TPolicy>
+    inline double TemplatedVocabulary<TPolicy>::score(const BowVector &v1, const BowVector &v2) const
     {
         return m_scoring_object->score(v1, v2);
     }
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    void TemplatedVocabulary<TDescriptor, TFeature>::transform(const TDescriptor &feature, WordId &id) const
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::transform(const DescriptorType<TPolicy> &feature, WordId &id) const
     {
         WordValue weight;
         transform(feature, id, weight);
@@ -1219,9 +1268,13 @@ namespace DBoW2
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    void TemplatedVocabulary<TDescriptor, TFeature>::transform(const TDescriptor &feature,
-                                                               WordId &word_id, WordValue &weight, NodeId *nid, int levelsup) const
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::transform(
+        const DescriptorType<TPolicy> &feature,
+        WordId &word_id,
+        WordValue &weight,
+        NodeId *nid,
+        int levelsup) const
     {
         // propagate the feature down the tree
         std::vector<NodeId> nodes;
@@ -1241,12 +1294,12 @@ namespace DBoW2
             nodes = m_nodes[final_id].children;
             final_id = nodes[0];
 
-            double best_d = TFeature::distance(feature, m_nodes[final_id].descriptor);
+            double best_d = TPolicy::Distance(feature, m_nodes[final_id].descriptor);
 
             for (nit = nodes.begin() + 1; nit != nodes.end(); ++nit)
             {
                 NodeId id = *nit;
-                double d = TFeature::distance(feature, m_nodes[id].descriptor);
+                double d = TPolicy::Distance(feature, m_nodes[id].descriptor);
                 if (d < best_d)
                 {
                     best_d = d;
@@ -1266,8 +1319,8 @@ namespace DBoW2
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    NodeId TemplatedVocabulary<TDescriptor, TFeature>::getParentNode(WordId wid, int levelsup) const
+    template <DescriptorPolicy TPolicy>
+    NodeId TemplatedVocabulary<TPolicy>::getParentNode(WordId wid, int levelsup) const
     {
         NodeId ret = m_words[wid]->id;   // node id
         while (levelsup > 0 && ret != 0) // ret == 0 --> root
@@ -1280,8 +1333,8 @@ namespace DBoW2
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    void TemplatedVocabulary<TDescriptor, TFeature>::getWordsFromNode(NodeId nid, std::vector<WordId> &words) const
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::getWordsFromNode(NodeId nid, std::vector<WordId> &words) const
     {
         words.clear();
 
@@ -1320,8 +1373,8 @@ namespace DBoW2
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    int TemplatedVocabulary<TDescriptor, TFeature>::stopWords(double minWeight)
+    template <DescriptorPolicy TPolicy>
+    int TemplatedVocabulary<TPolicy>::stopWords(double minWeight)
     {
         int c = 0;
         typename std::vector<Node *>::iterator wit;
@@ -1338,8 +1391,8 @@ namespace DBoW2
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    void TemplatedVocabulary<TDescriptor, TFeature>::save(const std::string &filename) const
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::save(const std::string &filename) const
     {
         cv::FileStorage fs(filename.c_str(), cv::FileStorage::WRITE);
         if (!fs.isOpened())
@@ -1350,8 +1403,8 @@ namespace DBoW2
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    void TemplatedVocabulary<TDescriptor, TFeature>::load(const std::string &filename)
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::load(const std::string &filename)
     {
         cv::FileStorage fs(filename.c_str(), cv::FileStorage::READ);
         if (!fs.isOpened())
@@ -1364,8 +1417,8 @@ namespace DBoW2
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    void TemplatedVocabulary<TDescriptor, TFeature>::save(cv::FileStorage &f,
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::save(cv::FileStorage &f,
                                                           const std::string &name) const
     {
         // Format YAML:
@@ -1427,7 +1480,7 @@ namespace DBoW2
                 f << "nodeId" << (int)child.id;
                 f << "parentId" << (int)pid;
                 f << "weight" << (double)child.weight;
-                f << "descriptor" << TFeature::toString(child.descriptor);
+                f << "descriptor" << TPolicy::Serialize(child.descriptor);
                 f << "}";
 
                 // add to parent list
@@ -1460,62 +1513,204 @@ namespace DBoW2
 
     // --------------------------------------------------------------------------
 
-    template <class TDescriptor, class TFeature>
-    void TemplatedVocabulary<TDescriptor, TFeature>::load(const cv::FileStorage &fs,
-                                                          const std::string &name)
+    template <DescriptorPolicy TPolicy>
+    void TemplatedVocabulary<TPolicy>::load(const cv::FileStorage &fs,
+                                            const std::string &name)
     {
-
-        m_words.clear();
-        m_nodes.clear();
-
-        cv::FileNode fvoc = fs[name];
-
-        m_k = (int)fvoc["k"];
-        m_L = (int)fvoc["L"];
-        m_scoring = (ScoringType)((int)fvoc["scoringType"]);
-        m_weighting = (WeightingType)((int)fvoc["weightingType"]);
-
-        createScoringObject();
-
-        // nodes
-        cv::FileNode fn = fvoc["nodes"];
-
-        m_nodes.resize(fn.size() + 1); // +1 to include root
-        m_nodes[0].id = 0;
-
-        std::cout << "--- Number of nodes in vocabulary: " << fn.size() << "\n";
-        for (unsigned int i = 0; i < fn.size(); ++i)
+        const cv::FileNode vocabulary_node = fs[name];
+        if (vocabulary_node.empty() || !vocabulary_node.isMap())
         {
-            NodeId nid = (int)fn[i]["nodeId"];
-            NodeId pid = (int)fn[i]["parentId"];
-            WordValue weight = (WordValue)fn[i]["weight"];
-            std::string d = (std::string)fn[i]["descriptor"];
-
-            m_nodes[nid].id = nid;
-            m_nodes[nid].parent = pid;
-            m_nodes[nid].weight = weight;
-            m_nodes[pid].children.push_back(nid);
-
-            TFeature::fromString(m_nodes[nid].descriptor, d);
-
-            std::cout << "Nodes loading loop iter " << i << " / " << fn.size() << "\r";
+            throw std::runtime_error("Vocabulary storage node is missing or is not a map.");
         }
 
-        // words
-        fn = fvoc["words"];
-
-        m_words.resize(fn.size());
-
-        std::cout << "--- Number of words in vocabulary: " << fn.size() << "\n";
-        for (unsigned int i = 0; i < fn.size(); ++i)
+        const auto read_integer = [](const cv::FileNode &node, const char *key) {
+            const cv::FileNode field = node[key];
+            if (field.empty() || !field.isInt())
+            {
+                throw std::runtime_error(
+                    std::string("Vocabulary field '") + key + "' must be an integer.");
+            }
+            return static_cast<int>(field);
+        };
+        const int branching_factor = read_integer(vocabulary_node, "k");
+        const int depth_levels = read_integer(vocabulary_node, "L");
+        const int scoring_value = read_integer(vocabulary_node, "scoringType");
+        const int weighting_value = read_integer(vocabulary_node, "weightingType");
+        if (branching_factor <= 0 || depth_levels <= 0 ||
+            scoring_value < static_cast<int>(L1_NORM) ||
+            scoring_value > static_cast<int>(DOT_PRODUCT) ||
+            weighting_value < static_cast<int>(TF_IDF) ||
+            weighting_value > static_cast<int>(BINARY))
         {
-            NodeId wid = (int)fn[i]["wordId"];
-            NodeId nid = (int)fn[i]["nodeId"];
+            throw std::runtime_error("Vocabulary tree parameters are outside supported ranges.");
+        }
 
-            m_nodes[nid].word_id = wid;
-            m_words[wid] = &m_nodes[nid];
+        const cv::FileNode serialized_nodes = vocabulary_node["nodes"];
+        if (serialized_nodes.empty() || !serialized_nodes.isSeq())
+        {
+            throw std::runtime_error("Vocabulary nodes must be a non-empty sequence.");
+        }
+        const std::size_t node_count = serialized_nodes.size();
+        if (node_count > static_cast<std::size_t>((std::numeric_limits<NodeId>::max)()) ||
+            node_count > static_cast<std::size_t>((std::numeric_limits<int>::max)()))
+        {
+            throw std::runtime_error("Vocabulary node count exceeds the NodeId range.");
+        }
 
-            std::cout << "Words loading loop iter " << i << " / " << fn.size() << "\r";
+        // Parse into temporary storage so malformed input cannot partially mutate this vocabulary.
+        std::vector<Node> loaded_nodes(node_count + 1U);
+        std::vector<bool> seen_nodes(node_count + 1U, false);
+        std::vector<std::size_t> node_depths(node_count + 1U, 0U);
+        loaded_nodes.front().id = 0;
+        seen_nodes.front() = true;
+        for (std::size_t index = 0; index < node_count; ++index)
+        {
+            const cv::FileNode serialized_node =
+                serialized_nodes[static_cast<int>(index)];
+            if (!serialized_node.isMap())
+            {
+                throw std::runtime_error("Every vocabulary node must be a map.");
+            }
+
+            const int node_id_value = read_integer(serialized_node, "nodeId");
+            const int parent_id_value = read_integer(serialized_node, "parentId");
+            if (node_id_value <= 0 ||
+                static_cast<std::size_t>(node_id_value) > node_count)
+            {
+                throw std::runtime_error("Vocabulary node ID is outside the serialized node range.");
+            }
+            if (parent_id_value < 0 ||
+                static_cast<std::size_t>(parent_id_value) > node_count)
+            {
+                throw std::runtime_error("Vocabulary parent ID is outside the serialized node range.");
+            }
+
+            const NodeId node_id = static_cast<NodeId>(node_id_value);
+            const NodeId parent_id = static_cast<NodeId>(parent_id_value);
+            if (seen_nodes[node_id])
+            {
+                throw std::runtime_error("Vocabulary contains a duplicate node ID.");
+            }
+            if (!seen_nodes[parent_id])
+            {
+                throw std::runtime_error(
+                    "Vocabulary parent must precede its child and connect to the root.");
+            }
+
+            const cv::FileNode weight_node = serialized_node["weight"];
+            const cv::FileNode descriptor_node = serialized_node["descriptor"];
+            if (weight_node.empty() || (!weight_node.isInt() && !weight_node.isReal()) ||
+                descriptor_node.empty() || !descriptor_node.isString())
+            {
+                throw std::runtime_error(
+                    "Vocabulary node weight and descriptor have invalid storage types.");
+            }
+            const WordValue weight = static_cast<double>(weight_node);
+            if (!std::isfinite(weight))
+            {
+                throw std::runtime_error("Vocabulary node weight must be finite.");
+            }
+
+            Node &node = loaded_nodes[node_id];
+            node.id = node_id;
+            node.parent = parent_id;
+            node.weight = weight;
+            if (!TPolicy::Deserialize(static_cast<std::string>(descriptor_node),
+                                      node.descriptor))
+            {
+                throw std::runtime_error("Invalid descriptor for vocabulary node " +
+                                         std::to_string(node_id));
+            }
+
+            const std::size_t node_depth = node_depths[parent_id] + 1U;
+            if (node_depth > static_cast<std::size_t>(depth_levels))
+            {
+                throw std::runtime_error("Vocabulary node exceeds the declared tree depth.");
+            }
+            node_depths[node_id] = node_depth;
+            loaded_nodes[parent_id].children.push_back(node_id);
+            if (loaded_nodes[parent_id].children.size() >
+                static_cast<std::size_t>(branching_factor))
+            {
+                throw std::runtime_error(
+                    "Vocabulary node exceeds the declared branching factor.");
+            }
+            seen_nodes[node_id] = true;
+        }
+
+        const cv::FileNode serialized_words = vocabulary_node["words"];
+        if (serialized_words.empty() || !serialized_words.isSeq())
+        {
+            throw std::runtime_error("Vocabulary words must be a non-empty sequence.");
+        }
+        const std::size_t word_count = serialized_words.size();
+        if (word_count > static_cast<std::size_t>((std::numeric_limits<WordId>::max)()) ||
+            word_count > static_cast<std::size_t>((std::numeric_limits<int>::max)()))
+        {
+            throw std::runtime_error("Vocabulary word count exceeds the WordId range.");
+        }
+
+        std::vector<NodeId> word_nodes(word_count, 0U);
+        std::vector<bool> seen_words(word_count, false);
+        std::vector<bool> node_has_word(node_count + 1U, false);
+        for (std::size_t index = 0; index < word_count; ++index)
+        {
+            const cv::FileNode serialized_word =
+                serialized_words[static_cast<int>(index)];
+            if (!serialized_word.isMap())
+            {
+                throw std::runtime_error("Every vocabulary word must be a map.");
+            }
+
+            const int word_id_value = read_integer(serialized_word, "wordId");
+            const int node_id_value = read_integer(serialized_word, "nodeId");
+            if (word_id_value < 0 ||
+                static_cast<std::size_t>(word_id_value) >= word_count)
+            {
+                throw std::runtime_error("Vocabulary word ID is outside the serialized word range.");
+            }
+            if (node_id_value <= 0 ||
+                static_cast<std::size_t>(node_id_value) > node_count)
+            {
+                throw std::runtime_error("Vocabulary word node ID is outside the node range.");
+            }
+
+            const WordId word_id = static_cast<WordId>(word_id_value);
+            const NodeId node_id = static_cast<NodeId>(node_id_value);
+            if (seen_words[word_id] || node_has_word[node_id])
+            {
+                throw std::runtime_error("Vocabulary word or word-node ID is duplicated.");
+            }
+            if (!loaded_nodes[node_id].isLeaf())
+            {
+                throw std::runtime_error("Vocabulary words must reference leaf nodes.");
+            }
+
+            loaded_nodes[node_id].word_id = word_id;
+            word_nodes[word_id] = node_id;
+            seen_words[word_id] = true;
+            node_has_word[node_id] = true;
+        }
+
+        for (std::size_t node_index = 1; node_index <= node_count; ++node_index)
+        {
+            if (loaded_nodes[node_index].isLeaf() != node_has_word[node_index])
+            {
+                throw std::runtime_error(
+                    "Vocabulary leaf and word-node sets do not match.");
+            }
+        }
+
+        m_k = branching_factor;
+        m_L = depth_levels;
+        m_scoring = static_cast<ScoringType>(scoring_value);
+        m_weighting = static_cast<WeightingType>(weighting_value);
+        createScoringObject();
+        m_nodes = std::move(loaded_nodes);
+        m_words.resize(word_count);
+        for (std::size_t word_id = 0; word_id < word_count; ++word_id)
+        {
+            m_words[word_id] = &m_nodes[word_nodes[word_id]];
         }
     }
 
@@ -1526,9 +1721,9 @@ namespace DBoW2
      * @param os stream to write to
      * @param voc
      */
-    template <class TDescriptor, class TFeature>
+    template <DescriptorPolicy TPolicy>
     std::ostream &operator<<(std::ostream &os,
-                             const TemplatedVocabulary<TDescriptor, TFeature> &voc)
+                             const TemplatedVocabulary<TPolicy> &voc)
     {
         os << "Vocabulary: k = " << voc.getBranchingFactor()
            << ", L = " << voc.getDepthLevels()

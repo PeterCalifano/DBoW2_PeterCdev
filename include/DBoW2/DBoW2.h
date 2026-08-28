@@ -47,31 +47,40 @@
 #include "BowVector.h"
 #include "FBrief.h"
 #include "FORB.h"
+#include "FSIFT.h"
+#include "FSurf64.h"
 #include "FeatureVector.h"
 #include "QueryResults.h"
 #include "TemplatedDatabase.h"
 #include "TemplatedVocabulary.h"
-#include "FeatureTraits.h"
 
 /// Includes all the data structures to manage vocabularies and image databases
 namespace DBoW2
 {
 
     /// ORB Vocabulary
-    typedef DBoW2::TemplatedVocabulary<DBoW2::FORB::TDescriptor, DBoW2::FORB>
-        OrbVocabulary;
+    using OrbVocabulary = DBoW2::TemplatedVocabulary<DBoW2::FORB>;
 
     /// FORB Database
-    typedef DBoW2::TemplatedDatabase<DBoW2::FORB::TDescriptor, DBoW2::FORB>
-        OrbDatabase;
+    using OrbDatabase = DBoW2::TemplatedDatabase<DBoW2::FORB>;
 
     /// BRIEF Vocabulary
-    typedef DBoW2::TemplatedVocabulary<DBoW2::FBrief::TDescriptor, DBoW2::FBrief>
-        BriefVocabulary;
+    using BriefVocabulary = DBoW2::TemplatedVocabulary<DBoW2::FBrief>;
 
     /// BRIEF Database
-    typedef DBoW2::TemplatedDatabase<DBoW2::FBrief::TDescriptor, DBoW2::FBrief>
-        BriefDatabase;
+    using BriefDatabase = DBoW2::TemplatedDatabase<DBoW2::FBrief>;
+
+    /// SURF64 Vocabulary
+    using Surf64Vocabulary = DBoW2::TemplatedVocabulary<DBoW2::FSurf64>;
+
+    /// SURF64 Database
+    using Surf64Database = DBoW2::TemplatedDatabase<DBoW2::FSurf64>;
+
+    /// SIFT Vocabulary
+    using SiftVocabulary = DBoW2::TemplatedVocabulary<DBoW2::FSIFT>;
+
+    /// SIFT Database
+    using SiftDatabase = DBoW2::TemplatedDatabase<DBoW2::FSIFT>;
 
 }
 #endif

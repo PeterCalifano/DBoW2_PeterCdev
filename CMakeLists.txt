@@ -17,12 +17,13 @@ find_package(OpenCV 4.2 REQUIRED)
 
 set(HDRS
     include/DBoW2/BowVector.h
+    include/DBoW2/DescriptorPolicy.h
     include/DBoW2/FBrief.h
     include/DBoW2/QueryResults.h
     include/DBoW2/TemplatedDatabase.h
     include/DBoW2/FORB.h
     include/DBoW2/DBoW2.h
-    include/DBoW2/FClass.h
+    include/DBoW2/FSIFT.h
     include/DBoW2/FeatureVector.h
     include/DBoW2/FSurf64.h
     include/DBoW2/ScoringObject.h
@@ -31,6 +32,7 @@ set(SRCS
     src/BowVector.cpp
     src/FBrief.cpp
     src/FORB.cpp
+    src/FSIFT.cpp
     src/FeatureVector.cpp
     src/FSurf64.cpp
     src/QueryResults.cpp
@@ -44,7 +46,7 @@ endif()
 
 add_library(${PROJECT_NAME} ${DBOW2_LIBRARY_KIND} ${SRCS} ${HDRS})
 set_target_properties(${PROJECT_NAME} PROPERTIES
-                      CXX_STANDARD 17
+                      CXX_STANDARD 20
                       CXX_STANDARD_REQUIRED ON
                       CXX_EXTENSIONS OFF
                       POSITION_INDEPENDENT_CODE ON)
@@ -61,7 +63,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC ${OpenCV_INCLUDE_DIRS})
 if(BUILD_AS_MAIN_PROJECT)
   add_executable(demo demo/demo.cpp)
   target_link_libraries(demo PRIVATE ${PROJECT_NAME} ${OpenCV_LIBS})
-  set_target_properties(demo PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+  set_target_properties(demo PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
   file(COPY demo/images DESTINATION ${CMAKE_BINARY_DIR})
 endif()
 
@@ -76,6 +78,7 @@ install(TARGETS ${PROJECT_NAME}
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
         INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(DIRECTORY include/DBoW2 DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(FILES LICENSE.txt DESTINATION ${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}/licenses)
 
 install(EXPORT ${PROJECT_NAME}
         FILE ${PROJECT_NAME}Target.cmake

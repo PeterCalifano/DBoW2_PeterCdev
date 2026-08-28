@@ -12,12 +12,21 @@
 #include <sstream>
 #include <stdint.h>
 #include <limits.h>
+#include <locale>
+#include <stdexcept>
+#include <utility>
 
 #include <DBoW2/FORB.h>
 
 using namespace std;
 
 namespace DBoW2 {
+
+FORB::Descriptor FORB::Clone(const Descriptor &descriptor)
+{
+  Validate(descriptor);
+  return descriptor.clone();
+}
 
 // --------------------------------------------------------------------------
 
@@ -192,7 +201,7 @@ void FORB::toMat32F(const cv::Mat &descriptors, cv::Mat &mat)
 
 // --------------------------------------------------------------------------
 
-void FORB::toMat8U(const std::vector<TDescriptor> &descriptors, 
+void FORB::toMat8U(const std::vector<TDescriptor> &descriptors,
   cv::Mat &mat)
 {
   mat.create(descriptors.size(), FORB::L, CV_8U);
@@ -205,6 +214,122 @@ void FORB::toMat8U(const std::vector<TDescriptor> &descriptors,
     std::copy(d, d + FORB::L, p);
   }
   
+}
+
+// --------------------------------------------------------------------------
+
+FORB::Descriptor FORB::Mean(const std::span<const Descriptor *const> descriptors)
+{
+  if(descriptors.empty())
+  {
+    throw std::invalid_argument("Cannot calculate a centroid from an empty ORB descriptor set.");
+  }
+
+  std::vector<pDescriptor> legacy_descriptors;
+  legacy_descriptors.reserve(descriptors.size());
+  for(const Descriptor *descriptor: descriptors)
+  {
+    if(descriptor == nullptr)
+    {
+      throw std::invalid_argument("ORB centroid input contains a null descriptor pointer.");
+    }
+    Validate(*descriptor);
+    legacy_descriptors.push_back(descriptor);
+  }
+
+  Descriptor mean;
+  meanValue(legacy_descriptors, mean);
+  return mean;
+}
+
+// --------------------------------------------------------------------------
+
+double FORB::Distance(const Descriptor &first, const Descriptor &second)
+{
+  Validate(first);
+  Validate(second);
+  return distance(first, second);
+}
+
+// --------------------------------------------------------------------------
+
+std::string FORB::Serialize(const Descriptor &descriptor)
+{
+  Validate(descriptor);
+
+  std::ostringstream stream;
+  stream.imbue(std::locale::classic());
+  const std::uint8_t *data = descriptor.ptr<std::uint8_t>();
+  for(int index = 0; index < descriptor.cols; ++index)
+  {
+    if(index != 0)
+    {
+      stream << ' ';
+    }
+    stream << static_cast<unsigned int>(data[index]);
+  }
+  return stream.str();
+}
+
+// --------------------------------------------------------------------------
+
+bool FORB::Deserialize(const std::string_view serialized, Descriptor &descriptor)
+{
+  Descriptor parsed(1, L, CV_8U);
+  std::istringstream stream{std::string(serialized)};
+  stream.imbue(std::locale::classic());
+
+  std::uint8_t *data = parsed.ptr<std::uint8_t>();
+  for(int index = 0; index < L; ++index)
+  {
+    unsigned int value = 0;
+    if(!(stream >> value) || value > 255U)
+    {
+      return false;
+    }
+    data[index] = static_cast<std::uint8_t>(value);
+  }
+
+  stream >> std::ws;
+  if(!stream.eof())
+  {
+    return false;
+  }
+
+  descriptor = std::move(parsed);
+  return true;
+}
+
+// --------------------------------------------------------------------------
+
+cv::Mat FORB::ToMat32F(const std::span<const Descriptor> descriptors)
+{
+  if(descriptors.empty())
+  {
+    return {};
+  }
+
+  std::vector<Descriptor> legacy_descriptors;
+  legacy_descriptors.reserve(descriptors.size());
+  for(const Descriptor &descriptor: descriptors)
+  {
+    Validate(descriptor);
+    legacy_descriptors.push_back(descriptor);
+  }
+
+  cv::Mat matrix;
+  toMat32F(legacy_descriptors, matrix);
+  return matrix;
+}
+
+// --------------------------------------------------------------------------
+
+void FORB::Validate(const Descriptor &descriptor)
+{
+  if(descriptor.type() != CV_8UC1 || descriptor.rows != 1 || descriptor.cols != L)
+  {
+    throw std::invalid_argument("ORB descriptor must be a 1x32 CV_8U matrix.");
+  }
 }
 
 // --------------------------------------------------------------------------

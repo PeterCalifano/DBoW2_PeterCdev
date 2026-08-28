@@ -10,46 +10,27 @@
 #ifndef __D_T_F_SURF_64__
 #define __D_T_F_SURF_64__
 
+#include <cstdint>
 #include <opencv2/core.hpp>
 #include <string>
+#include <string_view>
 #include <vector>
-#include "FeatureTraits.h"
-#include "FClass.h"
+#include "DescriptorPolicy.h"
 
 namespace DBoW2
 {
 
-    class FSurf64;
-
-    template <>
-    struct FeatureTraits<FSurf64>
-    {
-        using Feature = FSurf64;
-        using Descriptor = std::vector<float>;
-        static constexpr EFeatureType feature_type = EFeatureType::SURF;
-        static constexpr const char *name = "SURF64";
-        static constexpr bool is_binary = false;
-        static constexpr int descriptor_length = 64;
-    };
-
-    template <>
-    struct FeatureTypeTraits<EFeatureType::SURF> : FeatureTraits<FSurf64>
-    {
-        using Type = FSurf64;
-    };
-
-    /// Functions to manipulate SURF64 descriptors
-    class FSurf64 : protected FClass // DEVNOTE see implementation of this class (or ORB, BRIEF) to get an idea of how to implement any custom descriptor to be used by DBoW2
+    /** @brief SURF64 descriptor policy and compatibility helpers. */
+    class FSurf64 : public VectorFloatDescriptorPolicy<64>
     {
       public:
-        typedef FeatureTraits<FSurf64> Traits;
-        
-        /// Feature type
-        typedef FeatureTypeTraits<EFeatureType::SURF>::Type FeatureType;
-        static constexpr EFeatureType TypeId = Traits::feature_type;
-
+        using BasePolicy = VectorFloatDescriptorPolicy<64>;
+        using Descriptor = BasePolicy::Descriptor;
+        using Scalar = BasePolicy::Scalar;
+        static constexpr std::string_view kFamily = "surf64";
+        static constexpr std::uint32_t kDescriptorContractVersion = 1;
         /// Descriptor type
-        typedef std::vector<float> TDescriptor;
+        typedef Descriptor TDescriptor;
         /// Pointer to a single descriptor
         typedef const TDescriptor *pDescriptor;
         /// Descriptor length
