@@ -152,12 +152,13 @@ public:
 
   /**
    * Adds an entry to the database and returns its index.
-   * @param vec bow vector
+   * @param vec Normalized sparse BoW vector.
    * @param fec feature vector to add the entry. Only necessary if using the
    *   direct index
    * @return id of new entry
    * @throws std::out_of_range If a word or direct-index node ID is invalid.
-   * @throws std::invalid_argument If a word weight is nonfinite or negative.
+   * @throws std::invalid_argument If a sparse word weight is nonfinite or not
+   *   strictly positive.
    */
   EntryId add(const BowVector &vec, 
     const FeatureVector &fec = FeatureVector() );
@@ -211,8 +212,11 @@ public:
    * @param vec bow vector already normalized
    * @param ret results
    * @param max_results number of results to return. <= 0 means all
-   * @param max_id only entries with id <= max_id are returned in ret. 
+   * @param max_id only entries with id < max_id are returned in ret.
    *   < 0 means all
+   * @throws std::out_of_range If a word ID is outside the vocabulary.
+   * @throws std::invalid_argument If a sparse word weight is nonfinite or not
+   *   strictly positive.
    */
   void query(const BowVector &vec, QueryResults &ret, 
     int max_results = 1, int max_id = -1) const;
@@ -511,9 +515,10 @@ void TemplatedDatabase<TPolicy>::validateBowVector(const BowVector &vec) const
     {
       throw std::out_of_range("BoW vector references a word outside the vocabulary.");
     }
-    if(!std::isfinite(word_weight) || word_weight < 0.0)
+    if(!std::isfinite(word_weight) || word_weight <= 0.0)
     {
-      throw std::invalid_argument("BoW vector weights must be finite and nonnegative.");
+      throw std::invalid_argument(
+        "BoW vector sparse weights must be finite and strictly positive.");
     }
   }
 }
@@ -892,9 +897,7 @@ void TemplatedDatabase<TPolicy>::queryChiSquare(const BowVector &vec,
       {
         // (v-w)^2/(v+w) - v - w = -4 vw/(v+w)
         // we move the 4 out
-        double value = 0;
-        if(qvalue + dvalue > 0.0) // words may have weight zero
-          value = - qvalue * dvalue / (qvalue + dvalue);
+        const double value = -detail::chiSquareProductTerm(qvalue, dvalue);
         
         pit = pairs.lower_bound(entry_id);
         sit = sums.lower_bound(entry_id);
@@ -993,8 +996,7 @@ void TemplatedDatabase<TPolicy>::queryKL(const BowVector &vec,
       
       if((int)entry_id < max_id || max_id == -1)
       {
-        double value = 0;
-        if(vi > 0.0 && wi > 0.0) value = vi * log(vi/wi);
+        const double value = detail::klDivergenceTerm(vi, wi);
         
         pit = pairs.lower_bound(entry_id);
         if(pit != pairs.end() && !(pairs.key_comp()(entry_id, pit->first)))
@@ -1087,7 +1089,7 @@ void TemplatedDatabase<TPolicy>::queryBhattacharyya(
       
       if((int)entry_id < max_id || max_id == -1)
       {
-        double value = sqrt(qvalue * dvalue);
+        const double value = detail::bhattacharyyaTerm(qvalue, dvalue);
         
         pit = pairs.lower_bound(entry_id);
         if(pit != pairs.end() && !(pairs.key_comp()(entry_id, pit->first)))
@@ -1411,11 +1413,15 @@ void TemplatedDatabase<TPolicy>::load(const cv::FileStorage &fs,
 
       const EntryId entry_id = static_cast<EntryId>(entry_id_value);
       const WordValue weight = static_cast<double>(weight_node);
-      if(!std::isfinite(weight) || weight < 0.0 ||
-        (has_previous_entry && entry_id <= previous_entry))
+      if(!std::isfinite(weight) || weight <= 0.0)
       {
         throw std::runtime_error(
-          "Database inverted-index entries must be finite and strictly ordered.");
+          "Database inverted-index sparse weights must be finite and strictly positive.");
+      }
+      if(has_previous_entry && entry_id <= previous_entry)
+      {
+        throw std::runtime_error(
+          "Database inverted-index entries must be strictly ordered.");
       }
 
       loaded_inverted_file[word_index].emplace_back(entry_id, weight);
@@ -1428,7 +1434,7 @@ void TemplatedDatabase<TPolicy>::load(const cv::FileStorage &fs,
   if(!serialized_direct_file.isSeq() ||
     (use_direct_index && serialized_direct_file.size() !=
       static_cast<std::size_t>(entry_count)) ||
-    (!use_direct_index && !serialized_direct_file.empty()))
+    (!use_direct_index && serialized_direct_file.size() != 0U))
   {
     throw std::runtime_error(
       "Database direct index is inconsistent with its metadata.");

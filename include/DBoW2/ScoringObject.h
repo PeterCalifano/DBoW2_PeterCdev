@@ -9,20 +9,75 @@
 #ifndef __D_T_SCORING_OBJECT__
 #define __D_T_SCORING_OBJECT__
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
 #include "BowVector.h"
 
 namespace DBoW2 {
+
+namespace detail {
+
+/** @internal Numerically stable KL contribution for positive finite operands. */
+inline WordValue klDivergenceTerm(const WordValue first, const WordValue second) noexcept
+{
+  const WordValue ratio = first / second;
+  if(ratio >= (std::numeric_limits<WordValue>::min)() &&
+    ratio <= (std::numeric_limits<WordValue>::max)()) [[likely]]
+  {
+    return first * std::log(ratio);
+  }
+
+  // A log difference remains finite when the direct ratio overflows or underflows.
+  return first * (std::log(first) - std::log(second));
+}
+
+/** @internal Numerically stable Chi-square product term for normalized operands. */
+inline WordValue chiSquareProductTerm(const WordValue first,
+  const WordValue second) noexcept
+{
+  const WordValue product = first * second;
+  if(product >= (std::numeric_limits<WordValue>::min)()) [[likely]]
+  {
+    return product / (first + second);
+  }
+
+  // Scale by the larger operand when the direct product loses normal precision.
+  const WordValue smaller = std::min(first, second);
+  const WordValue larger = std::max(first, second);
+  return smaller / (1.0 + smaller / larger);
+}
+
+/** @internal Numerically stable Bhattacharyya term for positive finite operands. */
+inline WordValue bhattacharyyaTerm(const WordValue first, const WordValue second) noexcept
+{
+  const WordValue product = first * second;
+  if(product >= (std::numeric_limits<WordValue>::min)()) [[likely]]
+  {
+    return std::sqrt(product);
+  }
+
+  // Separate roots preserve contributions whose direct product underflows.
+  return std::sqrt(first) * std::sqrt(second);
+}
+
+} // namespace detail
 
 /// Base class of scoring functions
 class GeneralScoring
 {
 public:
   /**
-   * Computes the score between two vectors. Vectors must be sorted and 
-   * normalized if necessary
-   * @param v (in/out)
-   * @param w (in/out)
-   * @return score
+   * @brief Compute the score between two sparse word vectors.
+   * @param v First input vector.
+   * @param w Second input vector.
+   * @return Score defined by the concrete strategy.
+   * @pre The vectors are normalized as required by mustNormalize(). Stored
+   *   sparse weights are finite and strictly positive; zero is represented by
+   *   the absence of a word.
+   * @throws std::invalid_argument If a positive-domain strategy encounters an
+   *   invalid weight in an arithmetic operand.
    */
   virtual double score(const BowVector &v, const BowVector &w) const = 0;
 
@@ -52,10 +107,7 @@ public:
   NAME: public GeneralScoring \
   { public: \
     /** \
-     * Computes score between two vectors \
-     * @param v \
-     * @param w \
-     * @return score between v and w \
+     * @copydoc GeneralScoring::score \
      */ \
     double score(const BowVector &v, const BowVector &w) const override; \
     \

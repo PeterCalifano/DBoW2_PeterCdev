@@ -193,11 +193,15 @@ namespace DBoW2
         virtual WordId transform(const DescriptorType<TPolicy> &feature) const;
 
         /**
-         * Returns the score of two vectors
-         * @param a vector
-         * @param b vector
-         * @return score between vectors
-         * @note the vectors must be already sorted and normalized if necessary
+         * @brief Return the score between two sparse word vectors.
+         * @param a First input vector.
+         * @param b Second input vector.
+         * @return Score defined by the configured scoring strategy.
+         * @pre The vectors are normalized as required by the scoring strategy.
+         *   Stored sparse weights are finite and strictly positive; zero is
+         *   represented by the absence of a word.
+         * @throws std::invalid_argument If a positive-domain strategy encounters
+         *   an invalid weight in an arithmetic operand.
          */
         inline double score(const BowVector &a, const BowVector &b) const;
 
